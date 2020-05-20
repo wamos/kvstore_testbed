@@ -53,3 +53,5 @@ dkms.conf
 
 socket_test/client
 socket_test/server
+multithread/client
+multithread/server
