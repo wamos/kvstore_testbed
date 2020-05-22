@@ -1,3 +1,6 @@
+#ifndef NANOSLEEP_H
+#define NANOSLEEP_H
+
 #include <stdint.h>
 #include <time.h>
 #include <sys/time.h>
@@ -22,3 +25,5 @@ static inline uint64_t realnanosleep(uint64_t target_latency, struct timespec* t
 	}
 	return accum;
 }
+
+#endif //NANOSLEEP_H

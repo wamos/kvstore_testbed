@@ -1,3 +1,6 @@
+#ifndef EPOLL_STATE_H
+#define EPOLL_STATE_H
+
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -6,10 +9,6 @@ typedef struct epollState {
     int epoll_fd;
     struct epoll_event *events;
 } epollState;
-
-/*enum common_epoll_events{
-    EPOLLIN, EPOLLOUT, EPOLLERR, EPOLLHUP, EPOLLET
-};*/
 
 static int CreateEpoll(epollState* state, int setsize){
     state->events = (struct epoll_event *) malloc(sizeof(struct epoll_event)*setsize);
@@ -57,3 +56,4 @@ static int RemoveEpollEvent(int fd, epollState* state, uint32_t del_event){
     return 0;
 }
 
+#endif //EPOLL_STATE_H

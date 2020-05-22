@@ -191,10 +191,10 @@ int main(int argc, char *argv[]) {
     ssize_t numBytesSend;
     int conn_count = 1;
     int setsize = 1024;
-    int fd_array[1024];
-    int fd_head = 0;
-    int fd_tail = 0;
-    memset(&fd_array, -1, sizeof(fd_array));
+    //int fd_array[1024];
+    //int fd_head = 0;
+    //int fd_tail = 0;
+    //memset(&fd_array, -1, sizeof(fd_array));
 
     epollState epstate;
     epstate.epoll_fd = -1;
@@ -214,8 +214,10 @@ int main(int argc, char *argv[]) {
     }
 
     int total_events = 0;
+    int accept_connections = 0;
     while(1){
         printf("epoll_wait: waiting for connections\n");
+        printf("accepted connections: %d", accept_connections);
         int num_events = epoll_wait(epstate.epoll_fd, epstate.events, setsize, -1);
         if(num_events == -1){
             perror("epoll_wait");
@@ -238,6 +240,7 @@ int main(int argc, char *argv[]) {
                     printf("Accept connections\n");
                     int incoming_sock = TCPSocketAceept(listen_sock);
                     printf("incoming_sock_fd:%d\n", incoming_sock);
+                    accept_connections++;
                     // Set incoming sock to non-blocking
                     if( SetSocketNonblocking(incoming_sock) == -1){
                         printf("incoming_sock_fd:%d\n", incoming_sock);
@@ -251,7 +254,7 @@ int main(int argc, char *argv[]) {
                         perror("epoll_ctl error in AddEpollEvent\n");
                         continue;
                     }
-                    fd_array[fd_tail + j] = incoming_sock;
+                    //fd_array[fd_tail + j] = incoming_sock;
                 }
                 else{
                     while(1){
@@ -287,6 +290,7 @@ int main(int argc, char *argv[]) {
                         else{
                             printf("send:%zd\n", numBytes);
                         }
+                        
                     }
                 }
             }
