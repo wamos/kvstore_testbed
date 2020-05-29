@@ -88,11 +88,8 @@ void* thread_openloop(void *arg){
 
     ssize_t numBytes = 0;
     while(state->recv_bytes < state->conn_perthread*(MAX_NUM_REQ)*20 ){        
-    //while(state->send_bytes < state->conn_perthread*MAX_NUM_REQ*20){
 
         current_time = clock_gettime_us(&ts2);
-        //printf("thread id %" PRIu32 "next_req_id %" PRIu32 "\n", state->tid, next_req_id);
-        // We allow send time drift no more than 5 usecs
         while( current_time >= next_send && state->send_bytes < state->conn_perthread*MAX_NUM_REQ*20){
 
             uint32_t req_id = conn_list[send_conn_id].sent_req;
@@ -178,8 +175,8 @@ void* thread_openloop(void *arg){
                     }
                     else{ 
                         printf("thread id %" PRIu32 " recv() failed\n", state->tid);  
-                        break;
-                        //exit(1);
+                        //break;
+                        exit(1);
                     }
                 }else{
                     recv_byte_perloop = recv_byte_perloop + numBytes;
@@ -195,8 +192,6 @@ void* thread_openloop(void *arg){
         printf("*** thread id %" PRIu32 ", send:%" PRId64 ", recv:%" PRId64 "\n", state->tid, state->send_bytes ,state->recv_bytes);        
     }
     
-
-    //TOOO: close connection when join back to the main thread?
     printf("thread id %" PRIu32 " is closing up connection\n", state->tid);
     for(int conn_index = 0; conn_index < state->conn_perthread; conn_index++){  
         if(conn_list[conn_index].is_open)
@@ -210,6 +205,7 @@ void* thread_openloop(void *arg){
 void* thread_closedloop(void *arg){
     printf("thread_closedloop\n");    
     thread_state* stats = (thread_state*) arg;
+    struct timespec ts1, ts2;
     tcp_connection* conn_list = stats->conn_list;
 
     cpu_set_t cpuset;
@@ -232,6 +228,7 @@ void* thread_closedloop(void *arg){
         for(int i = 0; i < MAX_NUM_REQ; i++){
             ssize_t numBytes;
             if(conn_list[conn_index].is_open){
+                clock_gettime(CLOCK_REALTIME, &ts1);
                 ssize_t send_byte_perloop = 0;
                 while(send_byte_perloop < 20){
                     numBytes = send(conn_list[conn_index].fd, conn_list[conn_index].sendbuffer, 20, send_flag);
@@ -268,6 +265,10 @@ void* thread_closedloop(void *arg){
                         //printf("recv:%zd\n", numBytes);
                     }                    
                 }
+                clock_gettime(CLOCK_REALTIME, &ts2);
+                uint64_t duration = clock_gettime_diff_ns(&ts1,&ts2);
+                //TODO: each close loop thread has its own fp, see TODO in main()
+                //fprintf(fp,"%" PRIu64 "\n", duration);
                 stats->num_req+=1;
             }
         }
@@ -324,6 +325,14 @@ int main(int argc, char *argv[]) {
 
     closedloop_threads = (pthread_t *)malloc( num_threads_closeloop * sizeof(pthread_t) );
     closedloop_thread_state = (thread_state *)malloc( num_threads_closeloop * sizeof(thread_state) );
+
+    //TODO: closed-loop threads that actually measure the latency
+    // (1) thread setup
+    // (2) connection setup
+    // (3) file setup: seperate files for each thread
+    // (4) when do we launch closed-loop threads? 
+    //     We could start it after the open-loop threads have warmed up the server so we don't observe transient phenomena
+    //     like we've seen on an redis server idling more than 500 usecs
 
     printf("setting up connection\n");
     //setting up connection for each thread sequentially 
