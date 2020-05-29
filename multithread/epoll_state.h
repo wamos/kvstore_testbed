@@ -11,7 +11,7 @@ typedef struct epollState {
 } epollState;
 
 static int CreateEpoll(epollState* state, int setsize){
-    state->events = (struct epoll_event *) malloc(sizeof(struct epoll_event)*setsize);
+    state->events = (struct epoll_event *) malloc(sizeof(struct epoll_event)* (uint64_t) setsize);
     if(state->events == NULL){        
         return -1;
     }
@@ -27,15 +27,36 @@ static int CreateEpoll(epollState* state, int setsize){
 }
 
 static int CloseEpoll(epollState* state){
-    close(state->epoll_fd);
-    free(state->events);
+    if(state != NULL){
+        close(state->epoll_fd);
+        printf("free epoll state->events\n");
+        free(state->events);
+        return 0;
+    }
+    else
+        return -1;
 }
+
 
 static int AddEpollEvent(epollState* state, int fd, uint32_t event){
     struct epoll_event ee = {0};
     int op = EPOLL_CTL_ADD;
     ee.data.fd = fd;
     ee.events = event;
+
+    if (epoll_ctl(state->epoll_fd,op,fd,&ee) == -1) 
+        return -1;
+    
+    return 0;
+}
+
+
+static int AddEpollEventWithData(epollState* state, int fd, uint32_t u32, uint32_t event){
+    struct epoll_event ee = {0};
+    int op = EPOLL_CTL_ADD;
+    ee.data.fd = fd;
+    ee.events = event;
+    ee.data.u32 = u32;
 
     if (epoll_ctl(state->epoll_fd,op,fd,&ee) == -1) 
         return -1;

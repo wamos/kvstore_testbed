@@ -6,13 +6,7 @@
 
 #include "cpp_dist.h"
 
-//https://stackoverflow.com/questions/2744181/how-to-call-c-function-from-c
-// AAA::AAA() {
-// }
-
-// void AAA::sayHi(const char *name) {
-//     std::cout << "Hi " << name << std::endl;
-// }
+//ref: https://stackoverflow.com/questions/2744181/how-to-call-c-function-from-c
 
 DistGen::DistGen(){    
 }
@@ -30,10 +24,10 @@ void DistGen::ExponentialGen(double rate, uint32_t size){
     }
 }
 
-int DistGen::OutputExponentialArray(double* output_array){
+int DistGen::OutputExponentialInMicroseconds(double* output_array){
     if(output_array != nullptr){
         for(uint32_t i = 0; i < exponential_vector.size(); i++) {
-            output_array[i] = exponential_vector[i];
+            output_array[i] = exponential_vector[i]*1000000.0;
         }
         return 0;
     }

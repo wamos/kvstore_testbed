@@ -139,7 +139,7 @@ void send_socket_setup(int send_sock, struct sockaddr_in servAddr){
 int main(int argc, char *argv[]) {
 
 	char* recvIP = argv[1];     // 1st arg: server IP address (dotted quad)
-    in_port_t recvPort = (argc > 2) ? atoi(argv[2]) : 6379;
+    in_port_t recvPort = (in_port_t) (argc > 2) ? atoi(argv[2]) : 6379;
 
     char recv_buffer[20];
     char send_buffer[20];

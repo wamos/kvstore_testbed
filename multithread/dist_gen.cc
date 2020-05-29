@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 
+//ref: https://stackoverflow.com/questions/2744181/how-to-call-c-function-from-c
 // Inside this "extern C" block, I can implement functions in C++, which will externally 
 //   appear as C functions (which means that the function IDs will be their names, unlike
 //   the regular C++ behavior, which allows defining multiple functions with the same name
@@ -13,8 +14,9 @@ extern "C" {
 void GenPoissonArrival(double rate, uint32_t size, double* poisson_array) {
     DistGen dist_gen;
     dist_gen.ExponentialGen(rate, size);
-    dist_gen.OutputExponentialArray(poisson_array);
+    dist_gen.OutputExponentialInMicroseconds(poisson_array);
 }
+
 
 #ifdef __cplusplus
 }

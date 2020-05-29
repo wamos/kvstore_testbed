@@ -5,18 +5,12 @@
 #include <random>
 #include <vector>
 
-// class AAA {
-//     public:
-//         AAA();
-//         void sayHi(const char *name);
-// };
-
 class DistGen {
     public:
         DistGen();
         ~DistGen();
         void ExponentialGen(double rate, uint32_t size);
-        int OutputExponentialArray(double* output_array);
+        int OutputExponentialInMicroseconds(double* output_array);
 
     private:
         std::vector<double> exponential_vector;
