@@ -14,7 +14,7 @@
 #include "nanosleep.h"
 #include "epoll_state.h"
 
-static const int MAXPENDING = 5; // Maximum outstanding connection requests
+static const int MAXPENDING = 20; // Maximum outstanding connection requests
 static const int SERVER_BUFSIZE = 1024*16;
 
 /*int recv_socket_setup(int servSock, struct sockaddr_in servAddr, struct sockaddr_in clntAddr){
@@ -216,8 +216,8 @@ int main(int argc, char *argv[]) {
     int total_events = 0;
     int accept_connections = 0;
     while(1){
-        printf("epoll_wait: waiting for connections\n");
-        printf("accepted connections: %d", accept_connections);
+        //printf("epoll_wait: waiting for connections\n");
+        //printf("accepted connections: %d\n", accept_connections);
         int num_events = epoll_wait(epstate.epoll_fd, epstate.events, setsize, -1);
         if(num_events == -1){
             perror("epoll_wait");
@@ -225,10 +225,10 @@ int main(int argc, char *argv[]) {
         }
 
         if (num_events > 0) {
-            printf("epoll num_events:%d\n", num_events);
+            //printf("epoll num_events:%d\n", num_events);
             for (int j = 0; j < num_events; j++) {
                 struct epoll_event *e = epstate.events+j;
-                printf("epoll_event->data.fd:%d\n", e->data.fd);
+                //printf("epoll_event->data.fd:%d\n", e->data.fd);
                 if(e->events == EPOLLIN){
                     printf("event:EPOLLIN \n");
                 }
@@ -266,16 +266,16 @@ int main(int argc, char *argv[]) {
                                 exit(1);
                             }
                             else{
-                                printf("EAGAIN\n"); 
+                                //printf("EAGAIN\n"); 
                                 break;
                             }
                         }
                         else if (numBytes == 0){
-                            printf("recv no bytes\n");
+                            //printf("recv no bytes\n");
                             break;
                         }
                         else{
-                            printf("recv:%zd\n", numBytes);
+                            //printf("recv:%zd\n", numBytes);
                         }
 
                         //clock_gettime(CLOCK_REALTIME, &ts1);
@@ -288,7 +288,7 @@ int main(int argc, char *argv[]) {
                                 exit(1);
                         }
                         else{
-                            printf("send:%zd\n", numBytes);
+                            //printf("send:%zd\n", numBytes);
                         }
                         
                     }

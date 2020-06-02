@@ -19,11 +19,12 @@
 #include "epoll_state.h"
 #include "dist_gen.h"
 
-#define MAX_NUM_REQ 20
+#define OPEN_LOOP_ENABLE 1
+#define MAX_NUM_REQ 100*1000
+#define MAX_NUM_SAMPLE 80*1000
 #define MAX_PENDING_REQ 5
 
 typedef struct {
-    uint32_t conn_id;
     int fd;    
     uint8_t is_open;
     uint32_t pending_req;
@@ -48,6 +49,23 @@ typedef struct {
     tcp_connection* conn_list;    
 } thread_state; // per thread stats
 
+typedef struct {
+    int fd;    
+    uint8_t is_open;
+    char sendbuffer[20]; 
+    char recvbuffer[20];   
+    uint32_t num_req; // request are sent and recv
+    int64_t send_bytes;
+    int64_t recv_bytes;    
+} latency_connection;
+
+typedef struct {
+    //per thread state
+    uint32_t tid;
+    FILE* output_fptr;
+    latency_connection* conn;    
+} latency_state;
+
 pthread_barrier_t all_threads_ready;
 
 //static __thread tcp_connection* conn_list;
@@ -59,7 +77,7 @@ void* fake_mainloop(void *arg){
     return NULL;
 }
 
-void* thread_openloop(void *arg){
+void* openloop_multiple_connections(void *arg){
     printf("thread_openloop\n");    
     thread_state* state = (thread_state*) arg;
     tcp_connection* conn_list = state->conn_list;
@@ -87,7 +105,7 @@ void* thread_openloop(void *arg){
     uint64_t next_send = clock_gettime_us(&ts1);
 
     ssize_t numBytes = 0;
-    while(state->recv_bytes < state->conn_perthread*(MAX_NUM_REQ)*20 ){        
+    while(state->recv_bytes < state->conn_perthread*(MAX_NUM_REQ-20)*20 ){        
 
         current_time = clock_gettime_us(&ts2);
         while( current_time >= next_send && state->send_bytes < state->conn_perthread*MAX_NUM_REQ*20){
@@ -202,10 +220,10 @@ void* thread_openloop(void *arg){
 }
 
 
-void* thread_closedloop(void *arg){
+void* closedloop_multiple_connections(void *arg){
     printf("thread_closedloop\n");    
     thread_state* stats = (thread_state*) arg;
-    struct timespec ts1, ts2;
+    //struct timespec ts1, ts2;
     tcp_connection* conn_list = stats->conn_list;
 
     cpu_set_t cpuset;
@@ -228,7 +246,7 @@ void* thread_closedloop(void *arg){
         for(int i = 0; i < MAX_NUM_REQ; i++){
             ssize_t numBytes;
             if(conn_list[conn_index].is_open){
-                clock_gettime(CLOCK_REALTIME, &ts1);
+                //clock_gettime(CLOCK_REALTIME, &ts1);
                 ssize_t send_byte_perloop = 0;
                 while(send_byte_perloop < 20){
                     numBytes = send(conn_list[conn_index].fd, conn_list[conn_index].sendbuffer, 20, send_flag);
@@ -265,9 +283,8 @@ void* thread_closedloop(void *arg){
                         //printf("recv:%zd\n", numBytes);
                     }                    
                 }
-                clock_gettime(CLOCK_REALTIME, &ts2);
-                uint64_t duration = clock_gettime_diff_ns(&ts1,&ts2);
-                //TODO: each close loop thread has its own fp, see TODO in main()
+                //clock_gettime(CLOCK_REALTIME, &ts2);
+                //uint64_t duration = clock_gettime_diff_ns(&ts1,&ts2);
                 //fprintf(fp,"%" PRIu64 "\n", duration);
                 stats->num_req+=1;
             }
@@ -285,32 +302,96 @@ void* thread_closedloop(void *arg){
     return NULL;
 }
 
+void* closedloop_latency_measurement(void *arg){
+    printf("closedloop_latency_measurement\n");    
+    latency_state* state = (latency_state*) arg;
+    struct timespec ts1, ts2;
+
+    cpu_set_t cpuset;
+    pthread_t thread = pthread_self();
+
+	CPU_ZERO(&cpuset);
+	CPU_SET(state->tid, &cpuset);
+
+	if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) == -1){
+        printf("pthread_setaffinity_np fails\n");
+    }
+
+    int send_flag = MSG_DONTWAIT;
+    int recv_flag = MSG_DONTWAIT;
+    for(int i = 0; i < MAX_NUM_SAMPLE; i++){
+        ssize_t numBytes;
+        if(state->conn->is_open){
+            clock_gettime(CLOCK_REALTIME, &ts1);
+            ssize_t send_byte_perloop = 0;
+            while(send_byte_perloop < 20){
+                numBytes = send(state->conn->fd, state->conn->sendbuffer, 20, send_flag);
+                if (numBytes < 0){
+                    if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
+                        continue;
+                    }
+                    else{ 
+                        printf("thread id %" PRIu32 "send() failed\n", state->tid);
+                        exit(1);
+                    }
+                }else{
+                    send_byte_perloop = send_byte_perloop + numBytes;
+                    state->conn->send_bytes += numBytes;
+                    //printf("thread id %" PRIu32 ",send:%zd, iter:%d\n", stats->tid, numBytes, i);
+                }
+            }
+
+            //printf("thread id %" PRIu32 "before recv()\n", stats->tid);                               
+            ssize_t recv_byte_perloop = 0;
+            while(recv_byte_perloop < 20){
+                numBytes = recv(state->conn->fd, state->conn->recvbuffer, 20, recv_flag);                                        
+                if (numBytes < 0){
+                    if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
+                        continue;
+                    }
+                    else{ 
+                        printf("thread id %" PRIu32 "recv() failed\n", state->tid);  
+                        exit(1);
+                    }
+                }else{
+                    recv_byte_perloop = recv_byte_perloop + numBytes;
+                    state->conn->recv_bytes += numBytes;
+                    //printf("recv:%zd\n", numBytes);
+                }                    
+            }
+            clock_gettime(CLOCK_REALTIME, &ts2);
+            uint64_t duration = clock_gettime_diff_ns(&ts1,&ts2);
+            fprintf(state->output_fptr,"%" PRIu64 "\n", duration);
+            state->conn->num_req+=1;
+        }
+    }
+
+    fflush(state->output_fptr);
+
+    printf("thread id %" PRIu32 " closing up connection\n", state->tid);
+    if(state->conn->is_open)
+        close(state->conn->fd);
+
+    return NULL;
+}
+
 int main(int argc, char *argv[]) {
 
 	char* recvIP = (argc > 1) ? argv[1]: "10.0.0.8"; // server IP address (dotted quad)
     in_port_t recvPort = (in_port_t) (argc > 2) ? atoi(argv[2]) : 6379;
     uint32_t num_threads_openloop = (uint32_t) (argc > 3) ? atoi(argv[3]): 10;
-    uint32_t num_threads_closeloop = (uint32_t) (argc > 4) ? atoi(argv[4]): 1;
+    uint32_t num_threads_closedloop = (uint32_t) (argc > 4) ? atoi(argv[4]): 1;
     uint32_t conn_perthread = (uint32_t) (argc > 5) ? atoi(argv[5]): 2;
+    char* identify_string = (argc > 6) ? argv[6]: "test";
+    const char filename_prefix[] = "/home/shw328/kvstore/log/openloop_";
+    const char log[] = ".log";
+    struct timespec ts1, ts2;
 
 	memset(&servAddr, 0, sizeof(servAddr)); // Zero out structure
   	servAddr.sin_family = AF_INET;          // IPv4 address family
     servAddr.sin_port = htons(recvPort);    // Server port
     servAddr.sin_addr.s_addr = inet_addr(recvIP); // an incoming interface
 
-    pthread_t *openloop_threads;
-    thread_state *openloop_thread_state;
-    pthread_t *closedloop_threads;
-    thread_state *closedloop_thread_state;
-    //pthread_attr_t thread_attr;
-
-    if(pthread_barrier_init(&all_threads_ready, NULL, num_threads_openloop) == -1){
-        perror("pthread_barrier_init fails");
-        exit(1);
-    }
-
-    openloop_threads     = (pthread_t *)malloc( num_threads_openloop * sizeof(pthread_t) );
-    openloop_thread_state = (thread_state *)malloc( num_threads_openloop * sizeof(thread_state) );
     double* poisson_placeholder = (double *)malloc( MAX_NUM_REQ * sizeof(double) );
     uint64_t* poisson_arrival_pattern = (uint64_t *)malloc( MAX_NUM_REQ * sizeof(uint64_t) );
 
@@ -319,22 +400,29 @@ int main(int argc, char *argv[]) {
     GenPoissonArrival(rate, MAX_NUM_REQ, poisson_placeholder);
     for(int n = 0; n < MAX_NUM_REQ; n++) {
         poisson_arrival_pattern[n] = (uint64_t) round(poisson_placeholder[n]);
-        printf("%" PRIu64 ", %.3lf\n", poisson_arrival_pattern[n], poisson_placeholder[n]);
+        //printf("%" PRIu64 ", %.3lf\n", poisson_arrival_pattern[n], poisson_placeholder[n]);
     }
     free(poisson_placeholder);
 
-    closedloop_threads = (pthread_t *)malloc( num_threads_closeloop * sizeof(pthread_t) );
-    closedloop_thread_state = (thread_state *)malloc( num_threads_closeloop * sizeof(thread_state) );
+    pthread_t *openloop_threads;
+    thread_state *openloop_thread_state;
 
-    //TODO: closed-loop threads that actually measure the latency
-    // (1) thread setup
-    // (2) connection setup
-    // (3) file setup: seperate files for each thread
-    // (4) when do we launch closed-loop threads? 
-    //     We could start it after the open-loop threads have warmed up the server so we don't observe transient phenomena
-    //     like we've seen on an redis server idling more than 500 usecs
+    pthread_t *closedloop_threads;
+    latency_state *closedloop_thread_state;
 
-    printf("setting up connection\n");
+    if(pthread_barrier_init(&all_threads_ready, NULL, num_threads_openloop) == -1){
+        perror("pthread_barrier_init fails");
+        exit(1);
+    }
+
+    closedloop_threads = (pthread_t *)malloc( num_threads_closedloop * sizeof(pthread_t) );
+    closedloop_thread_state = (latency_state *)malloc( num_threads_closedloop * sizeof(latency_state) );
+
+    #ifdef OPEN_LOOP_ENABLE
+    openloop_threads     = (pthread_t *)malloc( num_threads_openloop * sizeof(pthread_t) );
+    openloop_thread_state = (thread_state *)malloc( num_threads_openloop * sizeof(thread_state) );
+
+    printf("setting up open-loop connection\n");
     //setting up connection for each thread sequentially 
     for (uint32_t thread_id = 0; thread_id < num_threads_openloop; thread_id++){
         // this allocation is not NUMA-waware!
@@ -356,7 +444,7 @@ int main(int argc, char *argv[]) {
 
             printf("thread id %" PRIu32 ", conn_fd:%d\n", thread_id, conn_fd);
             openloop_thread_state[thread_id].conn_list[conn_index].fd = conn_fd;
-            openloop_thread_state[thread_id].conn_list[conn_index].conn_id = conn_index;
+            //openloop_thread_state[thread_id].conn_list[conn_index].conn_id = conn_index;
             openloop_thread_state[thread_id].conn_list[conn_index].is_open = 1;
             openloop_thread_state[thread_id].conn_list[conn_index].pending_req = 0;
             openloop_thread_state[thread_id].conn_list[conn_index].sent_req = 0;
@@ -368,7 +456,53 @@ int main(int argc, char *argv[]) {
             AddEpollEventWithData(&openloop_thread_state[thread_id].epstate, conn_fd, conn_index, event_flag);
         }
     }
+    #else
+        printf("no open-loop connections, closed-loop only\n");
+    #endif
 
+    //closed-loop connection and thread setup
+    printf("setting up closed-loop connection\n");
+    //setting up 1 connection for each thread sequentially 
+    for (uint32_t thread_id = 0; thread_id < num_threads_closedloop; thread_id++){
+        closedloop_thread_state[thread_id].tid = num_threads_openloop + thread_id;
+        // this allocation is not NUMA-waware!
+        closedloop_thread_state[thread_id].conn = (latency_connection *)malloc( 1 * sizeof(latency_connection));
+        int conn_fd;
+
+        uint32_t conn_index = 0;
+        conn_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (connect(conn_fd, (struct sockaddr *) &servAddr, sizeof(servAddr)) < 0){
+            printf("connect() failed\n");
+            openloop_thread_state[thread_id].conn_list[conn_index].is_open = 0;
+            continue;
+        }
+
+        printf("thread id %" PRIu32 ", conn_fd:%d\n", closedloop_thread_state[thread_id].tid, conn_fd);
+        closedloop_thread_state[thread_id].conn->fd = conn_fd;
+        //closedloop_thread_state[thread_id].conn_list[conn_index].conn_id = conn_index;
+        closedloop_thread_state[thread_id].conn->is_open = 1;
+        closedloop_thread_state[thread_id].conn->num_req = 0;          
+        memset(&closedloop_thread_state[thread_id].conn->sendbuffer, 1, 20);
+        memset(&closedloop_thread_state[thread_id].conn->recvbuffer, 1, 20);
+    }
+
+    //closed-loop file setup
+    for (uint32_t thread_id = 0; thread_id < num_threads_closedloop; thread_id++){
+        char logfilename[100];
+        char thread_str[10];        
+        snprintf(thread_str, sizeof(char)* 10, "%u", thread_id);
+        snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[3]) + sizeof(argv[5]) + sizeof(thread_str) + 
+            sizeof(identify_string) + sizeof(log) + 15, "%s%sthd%sconn_thd%s_%s%s", filename_prefix, argv[3], argv[5], 
+            thread_str, identify_string, log);
+        // e.g. openloop_2thd4conn_thd0_test1.log
+        // open-loop setup with 2 open-loop threads and each has 4 connections
+        // measured from closed-loop thread 0 
+        // marked as "test1" for this particular run
+        printf("closed-loop thread %u logs to file %s\n", thread_id, logfilename);
+        closedloop_thread_state[thread_id].output_fptr = fopen(logfilename,"w+");        
+    }
+
+    #ifdef OPEN_LOOP_ENABLE
     for (uint32_t thread_id = 0; thread_id < num_threads_openloop; thread_id++){
         openloop_thread_state[thread_id].tid = thread_id;
         openloop_thread_state[thread_id].conn_perthread = conn_perthread;
@@ -376,11 +510,33 @@ int main(int argc, char *argv[]) {
         openloop_thread_state[thread_id].num_req = 0;
         openloop_thread_state[thread_id].send_bytes = 0;
         openloop_thread_state[thread_id].recv_bytes = 0;
-        //pthread_create(&openloop_threads[thread_id], NULL, thread_closedloop, &openloop_thread_state[thread_id]);
-        pthread_create(&openloop_threads[thread_id], NULL, thread_openloop, &openloop_thread_state[thread_id]);
+        //pthread_create(&openloop_threads[thread_id], NULL, closedloop_multiple_connections, &openloop_thread_state[thread_id]);
+        pthread_create(&openloop_threads[thread_id], NULL, openloop_multiple_connections, &openloop_thread_state[thread_id]);
         //pthread_create(&openloop_threads[i], NULL, fake_mainloop, (void *) &i);
     }
+    #endif 
+    
+    //when do we launch closed-loop threads? 
+    //     We could start it after the open-loop threads have warmed up the server so we don't observe transient phenomena
+    //     like we've seen on an redis server idling more than 500 usecs
+    //clock_gettime(CLOCK_REALTIME, &ts1);
+    //realnanosleep(100*1000, &ts1, &ts2);  //sleep 500 usecs 
 
+    for (uint32_t thread_id = 0; thread_id < num_threads_closedloop; thread_id++){
+        pthread_create(&closedloop_threads[thread_id], NULL, closedloop_latency_measurement, &closedloop_thread_state[thread_id]);
+    }
+    
+    printf("closedloop_thread:\n");
+    for (uint32_t thread_id = 0; thread_id < num_threads_closedloop; thread_id++){
+        pthread_join(closedloop_threads[thread_id], NULL);
+        printf("thread id %" PRIu32 ":", closedloop_thread_state[thread_id].tid);
+        printf("req:%" PRIu32 ",", closedloop_thread_state[thread_id].conn->num_req);
+        printf("send:%" PRId64 ",", closedloop_thread_state[thread_id].conn->send_bytes);
+        printf("recv:%" PRId64 "\n", closedloop_thread_state[thread_id].conn->recv_bytes); 
+    }
+
+    #ifdef OPEN_LOOP_ENABLE
+    printf("openloop_threads:\n");
     for (uint32_t thread_id = 0;  thread_id < num_threads_openloop; thread_id++){
         pthread_join(openloop_threads[thread_id], NULL);
         //close epoll fd and free its associated event list
@@ -390,71 +546,30 @@ int main(int argc, char *argv[]) {
         printf("send:%" PRId64 ",", openloop_thread_state[thread_id].send_bytes);
         printf("recv:%" PRId64 "\n", openloop_thread_state[thread_id].recv_bytes);        
     }
-
-    printf("free openloop_threads\n");
+    //printf("free openloop_threads\n");
     free(openloop_threads);
+    #endif
+
     free(closedloop_threads);
 
-    printf("free openloop_thread_state conn list\n");
+    //printf("free closedloop_thread_state conn\n");
+    for (uint32_t thread_id = 0; thread_id < num_threads_closedloop; thread_id++){
+        free(closedloop_thread_state[thread_id].conn);
+        fclose(closedloop_thread_state[thread_id].output_fptr);
+    }
+
+    #ifdef OPEN_LOOP_ENABLE
+    //printf("free openloop_thread_state conn list\n");
     for (uint32_t thread_id = 0; thread_id < num_threads_openloop; thread_id++){
         free(openloop_thread_state[thread_id].conn_list);
     }
 
-    printf("free openloop_thread_state\n");
+    //printf("free openloop_thread_state\n");
     free(openloop_thread_state);
     free(openloop_thread_state);
+    #endif
 
     free(poisson_arrival_pattern);
 
-    /*char sendbuffer[20];
-	memset(&sendbuffer, 1, sizeof(sendbuffer));
-    char recvbuffer[20];
-    memset(&recvbuffer, 1, sizeof(recvbuffer));
-
-    struct timespec ts1, ts2, sleep_ts1, sleep_ts2;
-
-  	// Create a reliable, stream socket using TCP
-	int send_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (send_sock < 0){
-		printf("socket() failed\n");
-        exit(1);
-    }
-
-  	// Construct the server address structure
-	struct sockaddr_in servAddr;            // Server address
-	memset(&servAddr, 0, sizeof(servAddr)); // Zero out structure
-  	servAddr.sin_family = AF_INET;          // IPv4 address family
-    servAddr.sin_port = htons(recvPort);    // Server port
-    servAddr.sin_addr.s_addr = inet_addr(recvIP); // an incoming interface
-
-	if (connect(send_sock, (struct sockaddr *) &servAddr, sizeof(servAddr)) < 0){
-		printf("connect() failed\n");
-        exit(1);
-    }
-
-    //sleep(5);
-
-    for(int i = 0; i < 5; i++){
-        ssize_t numBytes = send(send_sock, sendbuffer, 20, 0);
-        if (numBytes < 0){
-            printf("send() failed\n");
-            exit(1);
-        }else{
-            printf("send:%zd\n", numBytes);
-        }
-
-        numBytes = recv(send_sock, recvbuffer, 20, 0);
-        if (numBytes < 0){
-            printf("recv() failed\n");
-            exit(1);
-        }else{
-            printf("recv:%zd\n", numBytes);
-        }
-    }
-
-
-	close(send_sock);*/
-    //fclose(fp);
-
-  	exit(0);
+    return 0;
 }
