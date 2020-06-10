@@ -8,6 +8,7 @@
 #include <time.h>
 #include <errno.h>
 #include <pthread.h>
+#include <signal.h>
 
 #include <sys/time.h> 
 #include <sys/types.h>
@@ -21,8 +22,8 @@
 
 #define OPEN_LOOP_ENABLE 1
 #define MAX_NUM_REQ 100*1000
-#define MAX_NUM_SAMPLE 80*1000
-#define MAX_PENDING_REQ 5
+#define MAX_NUM_SAMPLE 100*1000
+//#define MAX_PENDING_REQ 20
 
 typedef struct {
     int fd;    
@@ -86,7 +87,11 @@ void* openloop_multiple_connections(void *arg){
     pthread_t thread = pthread_self();
 
 	CPU_ZERO(&cpuset);
-	CPU_SET(state->tid, &cpuset);
+	CPU_SET(state->tid*2, &cpuset);
+    //shw328@yeti-05:~/kvstore/multithread/build$ cat /sys/class/net/enp59s0/device/numa_node
+    //0
+    //shw328@yeti-05:~/kvstore/multithread/build$ cat /sys/devices/system/node/node0/cpulist
+    //0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,56,58,60,62,64,66,68,70,72,74,76,78
 
 	if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) == -1){
         printf("pthread_setaffinity_np fails\n");
@@ -105,14 +110,14 @@ void* openloop_multiple_connections(void *arg){
     uint64_t next_send = clock_gettime_us(&ts1);
 
     ssize_t numBytes = 0;
-    while(state->recv_bytes < state->conn_perthread*(MAX_NUM_REQ-20)*20 ){        
+    while(state->recv_bytes < state->conn_perthread*(MAX_NUM_REQ)*20 ){        
 
         current_time = clock_gettime_us(&ts2);
         while( current_time >= next_send && state->send_bytes < state->conn_perthread*MAX_NUM_REQ*20){
 
             uint32_t req_id = conn_list[send_conn_id].sent_req;
             if(req_id > MAX_NUM_REQ){
-                printf("Having reqs > MAX_NUM_REQ, randomly assign an index\n");
+                //printf("Having reqs > MAX_NUM_REQ, randomly assign an index\n");
                 req_id = rand()%MAX_NUM_REQ;
             }
             interval = (uint64_t) state->arrival_pattern[req_id];
@@ -121,14 +126,13 @@ void* openloop_multiple_connections(void *arg){
                 //state->tid, send_conn_id, current_time, interval, next_send);
 
             // max_pending_req is 5 for now. break the loop if we see max_pending_req on this connection
-            // TODO: make it configureable
-            if(conn_list[send_conn_id].pending_req > MAX_PENDING_REQ){
-                printf("pending_req > MAX_PENDING_REQ, break loop\n"); 
-                send_conn_id = 0;
-                interval = (uint64_t) state->arrival_pattern[req_id];
-                next_send = clock_gettime_us(&ts2) + interval;
-                break;
-            }
+            //if(conn_list[send_conn_id].pending_req > MAX_PENDING_REQ){
+                //printf("pending_req > MAX_PENDING_REQ, break loop\n"); 
+                //send_conn_id = 0;
+                //interval = (uint64_t) state->arrival_pattern[req_id];
+                //next_send = clock_gettime_us(&ts2) + interval;
+                //break;
+            //}
 
             ssize_t send_byte_perloop = 0;
             while(send_byte_perloop < 20){
@@ -146,7 +150,7 @@ void* openloop_multiple_connections(void *arg){
                     state->send_bytes += numBytes;                    
                 }
             }
-            printf("thread id %" PRIu32 ",conn id %" PRIu32 ",send %zd\n", state->tid, send_conn_id, numBytes);
+            //printf("thread id %" PRIu32 ",conn id %" PRIu32 ",send %zd\n", state->tid, send_conn_id, numBytes);
 
             //update indices
             conn_list[send_conn_id].pending_req++;
@@ -177,12 +181,12 @@ void* openloop_multiple_connections(void *arg){
         //  identify conn index
         //  recv on the correct socket
 
-        printf("-");
-        int num_events = epoll_wait(state->epstate.epoll_fd, state->epstate.events, state->conn_perthread, 0);
+        //printf("-");
+        int num_events = epoll_wait(state->epstate.epoll_fd, state->epstate.events, 10*state->conn_perthread, 0);
 		for (int i = 0; i < num_events; i++) {
 			uint32_t conn_index = state->epstate.events[i].data.u32;
-            printf("\nprocess epoll_wait events, conn index %" PRIu32 "\n", conn_index);
-            printf("events fd:%d, conn_list fd:%d\n", state->epstate.events[i].data.fd, conn_list[conn_index].fd);
+            //printf("\nprocess epoll_wait events, conn index %" PRIu32 "\n", conn_index);
+            //printf("events fd:%d, conn_list fd:%d\n", state->epstate.events[i].data.fd, conn_list[conn_index].fd);
             ssize_t recv_byte_perloop = 0;
             while(recv_byte_perloop < 20){
                 //numBytes = recv(state->epstate.events[i].data.fd, state->recvbuffer, 20, recv_flag);                                        
@@ -202,12 +206,12 @@ void* openloop_multiple_connections(void *arg){
                     //printf("recv:%zd\n", numBytes);
                 }                
             }
-            printf("thread id %" PRIu32 ",conn id %" PRIu32 ",recv %zd\n", state->tid, conn_index, numBytes);
+            //printf("thread id %" PRIu32 ",conn id %" PRIu32 ",recv %zd\n", state->tid, conn_index, numBytes);
             conn_list[conn_index].pending_req--;
             state->num_req+=1;
         }
 
-        printf("*** thread id %" PRIu32 ", send:%" PRId64 ", recv:%" PRId64 "\n", state->tid, state->send_bytes ,state->recv_bytes);        
+        //printf("*** thread id %" PRIu32 ", send:%" PRId64 ", recv:%" PRId64 "\n", state->tid, state->send_bytes ,state->recv_bytes);        
     }
     
     printf("thread id %" PRIu32 " is closing up connection\n", state->tid);
@@ -383,11 +387,12 @@ int main(int argc, char *argv[]) {
     uint32_t num_threads_closedloop = (uint32_t) (argc > 4) ? atoi(argv[4]): 1;
     uint32_t conn_perthread = (uint32_t) (argc > 5) ? atoi(argv[5]): 2;
     char* identify_string = (argc > 6) ? argv[6]: "test";
-    const char filename_prefix[] = "/home/shw328/kvstore/log/openloop_";
+    double rate = (argc > 7)? atof(argv[7]): 10000.0;
+    const char filename_prefix[] = "/home/shw328/kvstore/log/";
     const char log[] = ".log";
     struct timespec ts1, ts2;
-
-	memset(&servAddr, 0, sizeof(servAddr)); // Zero out structure
+    
+    memset(&servAddr, 0, sizeof(servAddr)); // Zero out structure
   	servAddr.sin_family = AF_INET;          // IPv4 address family
     servAddr.sin_port = htons(recvPort);    // Server port
     servAddr.sin_addr.s_addr = inet_addr(recvIP); // an incoming interface
@@ -396,13 +401,15 @@ int main(int argc, char *argv[]) {
     uint64_t* poisson_arrival_pattern = (uint64_t *)malloc( MAX_NUM_REQ * sizeof(uint64_t) );
 
     // generate intervals of poisson inter arrival 
-    double rate = 10000.0;
+    //double rate = 10000.0;
+    printf("rate:%lf\n", rate);
     GenPoissonArrival(rate, MAX_NUM_REQ, poisson_placeholder);
     for(int n = 0; n < MAX_NUM_REQ; n++) {
         poisson_arrival_pattern[n] = (uint64_t) round(poisson_placeholder[n]);
         //printf("%" PRIu64 ", %.3lf\n", poisson_arrival_pattern[n], poisson_placeholder[n]);
     }
     free(poisson_placeholder);
+    //exit(1);
 
     pthread_t *openloop_threads;
     thread_state *openloop_thread_state;
@@ -489,11 +496,17 @@ int main(int argc, char *argv[]) {
     //closed-loop file setup
     for (uint32_t thread_id = 0; thread_id < num_threads_closedloop; thread_id++){
         char logfilename[100];
-        char thread_str[10];        
-        snprintf(thread_str, sizeof(char)* 10, "%u", thread_id);
-        snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[3]) + sizeof(argv[5]) + sizeof(thread_str) + 
-            sizeof(identify_string) + sizeof(log) + 15, "%s%sthd%sconn_thd%s_%s%s", filename_prefix, argv[3], argv[5], 
-            thread_str, identify_string, log);
+        // for different number of threads
+        // char thread_str[10];        
+        // snprintf(thread_str, sizeof(char)* 10, "%u", thread_id);
+        // snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[3]) + sizeof(argv[5]) + sizeof(thread_str) + 
+        //     sizeof(identify_string) + sizeof(log) + 15, "%s%s_%sthd_%sconn_thd%s%s", filename_prefix, identify_string, argv[3], argv[5], 
+        //     thread_str, log);
+
+        snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[3]) + sizeof(argv[5]) +  sizeof(argv[7]) +
+            sizeof(identify_string) + sizeof(log) + 15, "%s%s_%s_%sthd_%sconn%s", filename_prefix, identify_string, 
+            argv[7], argv[3], argv[5], log);
+
         // e.g. openloop_2thd4conn_thd0_test1.log
         // open-loop setup with 2 open-loop threads and each has 4 connections
         // measured from closed-loop thread 0 
@@ -519,8 +532,8 @@ int main(int argc, char *argv[]) {
     //when do we launch closed-loop threads? 
     //     We could start it after the open-loop threads have warmed up the server so we don't observe transient phenomena
     //     like we've seen on an redis server idling more than 500 usecs
-    //clock_gettime(CLOCK_REALTIME, &ts1);
-    //realnanosleep(100*1000, &ts1, &ts2);  //sleep 500 usecs 
+    clock_gettime(CLOCK_REALTIME, &ts1);
+    realnanosleep(1000*1000, &ts1, &ts2);  //sleep 1000 usecs 
 
     for (uint32_t thread_id = 0; thread_id < num_threads_closedloop; thread_id++){
         pthread_create(&closedloop_threads[thread_id], NULL, closedloop_latency_measurement, &closedloop_thread_state[thread_id]);

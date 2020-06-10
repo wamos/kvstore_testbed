@@ -140,6 +140,7 @@ int main(int argc, char *argv[]) {
 
 	char* recvIP = argv[1];     // 1st arg: server IP address (dotted quad)
     in_port_t recvPort = (in_port_t) (argc > 2) ? atoi(argv[2]) : 6379;
+    int expected_connections = (argc > 3) ? atoi(argv[3])*4 : 20;
 
     char recv_buffer[20];
     char send_buffer[20];
@@ -215,6 +216,7 @@ int main(int argc, char *argv[]) {
 
     int total_events = 0;
     int accept_connections = 0;
+    //int expected_connections = 40;
     while(1){
         //printf("epoll_wait: waiting for connections\n");
         //printf("accepted connections: %d\n", accept_connections);
@@ -229,12 +231,12 @@ int main(int argc, char *argv[]) {
             for (int j = 0; j < num_events; j++) {
                 struct epoll_event *e = epstate.events+j;
                 //printf("epoll_event->data.fd:%d\n", e->data.fd);
-                if(e->events == EPOLLIN){
-                    printf("event:EPOLLIN \n");
-                }
-                else if(e->events == EPOLLET){
-                    printf("event:EPOLLET \n");
-                }
+                // if(e->events == EPOLLIN){
+                //     printf("event:EPOLLIN \n");
+                // }
+                // else if(e->events == EPOLLET){
+                //     printf("event:EPOLLET \n");
+                // }
 
                 if ( e->data.fd == listen_sock){              
                     printf("Accept connections\n");
@@ -257,40 +259,53 @@ int main(int argc, char *argv[]) {
                     //fd_array[fd_tail + j] = incoming_sock;
                 }
                 else{
-                    while(1){
-                        ssize_t numBytes = recv(e->data.fd, recv_buffer, 20, 0);
-                        numBytesRcvd = numBytesRcvd + numBytes;
+                    if(accept_connections < expected_connections){
+                        printf("e->data.fd:%d\n", e->data.fd);
+                        continue;                    
+                    }
+
+                    ssize_t numBytes = 0;
+                    ssize_t recv_byte_perloop = 0;
+                    ssize_t send_byte_perloop = 0;
+                    while(recv_byte_perloop < 20){
+                        numBytes = recv(e->data.fd, recv_buffer, 20, MSG_DONTWAIT);
                         if (numBytes < 0){
-                            if(errno != EAGAIN){
-                                perror("recv() failed\n");
-                                exit(1);
+                            if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
+                                //send_byte_perloop = 20; // trick the next send-loop to fail
+                                //break;
+                                continue;
                             }
                             else{
-                                //printf("EAGAIN\n"); 
-                                break;
+                                perror("recv() failed\n"); 
+                                exit(1);
                             }
                         }
-                        else if (numBytes == 0){
-                            //printf("recv no bytes\n");
+                        else if (numBytes == 0 && recv_byte_perloop == 20){
                             break;
                         }
                         else{
+                            recv_byte_perloop = recv_byte_perloop + numBytes;
                             //printf("recv:%zd\n", numBytes);
                         }
+                    }
 
-                        //clock_gettime(CLOCK_REALTIME, &ts1);
-                        //sleep_ts1=ts1;
-                        //realnanosleep(25*1000, &sleep_ts1, &sleep_ts2); // processing time 25 us
-
-                        numBytes = send(e->data.fd, send_buffer, 20, 0);
+                    while(send_byte_perloop < 20){
+                        numBytes = send(e->data.fd, send_buffer, 20, MSG_DONTWAIT);
                         if (numBytes < 0){
-                                perror("send() failed\n");
+                            if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
+                                continue;
+                            }
+                            else{
+                                perror("send() failed\n"); 
                                 exit(1);
+                            }
+                        }
+                        else if (numBytes == 0 && send_byte_perloop == 20){
+                            break;
                         }
                         else{
-                            //printf("send:%zd\n", numBytes);
+                            send_byte_perloop = send_byte_perloop + numBytes;                
                         }
-                        
                     }
                 }
             }
