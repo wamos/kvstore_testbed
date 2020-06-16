@@ -17,7 +17,23 @@
 // uint64_t tcpSend(int fd ,char *buffer, uint64_t buf_size);
 // uint64_t tcpReceive(int fd, char *buffer, uint64_t buf_size);
 
-#define ITERS 100*1000
+#define ITERS 1000*1000
+
+typedef struct __attribute__((__packed__)) {
+  uint16_t service_id;    // Type of Service.
+  uint16_t request_id;    // Request identifier.
+  uint16_t packet_id;     // Packet identifier.
+  uint16_t options;       // Options (could be request length etc.).
+  in_addr_t alt_dst_ip;
+} alt_header;
+
+int SetTCPNoDelay(int sock, int flag){
+    if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) == -1){
+        //perror("setsockopt TCP_NODELAY error\n");
+        return -1;
+    }
+    return 0;
+}
 
 static inline uint64_t realnanosleep(uint64_t target_latency, struct timespec* ts1, struct timespec* ts2){
     uint64_t accum = 0;

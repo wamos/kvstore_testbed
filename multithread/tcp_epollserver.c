@@ -140,7 +140,8 @@ int main(int argc, char *argv[]) {
 
 	char* recvIP = argv[1];     // 1st arg: server IP address (dotted quad)
     in_port_t recvPort = (in_port_t) (argc > 2) ? atoi(argv[2]) : 6379;
-    int expected_connections = (argc > 3) ? atoi(argv[3])*4 : 20;
+    // assume 4 connections per open-loop thread and only 1 closed-loop connection
+    int expected_connections = (argc > 3) ? atoi(argv[3])*4+1: 20;  
 
     char recv_buffer[20];
     char send_buffer[20];
@@ -191,11 +192,10 @@ int main(int argc, char *argv[]) {
     ssize_t numBytesRcvd;
     ssize_t numBytesSend;
     int conn_count = 1;
-    int setsize = 1024;
-    //int fd_array[1024];
-    //int fd_head = 0;
-    //int fd_tail = 0;
-    //memset(&fd_array, -1, sizeof(fd_array));
+    int setsize = 10240;
+    int fd_array[1024];
+    int fd_tail = 0; //int fd_head = 0;
+    memset(&fd_array, -1, sizeof(fd_array));
 
     epollState epstate;
     epstate.epoll_fd = -1;
@@ -216,6 +216,7 @@ int main(int argc, char *argv[]) {
 
     int total_events = 0;
     int accept_connections = 0;
+    int max_retries = 5;
     //int expected_connections = 40;
     while(1){
         //printf("epoll_wait: waiting for connections\n");
@@ -227,7 +228,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (num_events > 0) {
-            //printf("epoll num_events:%d\n", num_events);
+            //printf("num_events:%d\n", num_events);
             for (int j = 0; j < num_events; j++) {
                 struct epoll_event *e = epstate.events+j;
                 //printf("epoll_event->data.fd:%d\n", e->data.fd);
@@ -237,6 +238,18 @@ int main(int argc, char *argv[]) {
                 // else if(e->events == EPOLLET){
                 //     printf("event:EPOLLET \n");
                 // }
+                if( e->events == EPOLLHUP){
+                    perror("\n-------\nevent:EPOLLHUP\n--------\n");
+                    continue;
+                }
+                else if( e->events == EPOLLERR){
+                    perror("\n-------\nevent:EPOLLERR\n--------\n");
+                    continue;
+                }
+                else if( e->events == EPOLLRDHUP){
+                    perror("\n-------\nevent:EPOLLERR\n--------\n");
+                    continue;
+                }
 
                 if ( e->data.fd == listen_sock){              
                     printf("Accept connections\n");
@@ -250,23 +263,49 @@ int main(int argc, char *argv[]) {
                         continue;
                     }
 
-                    event_flag = EPOLLOUT | EPOLLIN | EPOLLET;
+                    event_flag = EPOLLOUT | EPOLLIN | EPOLLET | EPOLLRDHUP;
                     if(AddEpollEvent(&epstate, incoming_sock, event_flag) == -1){
                         printf("incoming_sock_fd:%d\n", incoming_sock);
                         perror("epoll_ctl error in AddEpollEvent\n");
                         continue;
                     }
-                    //fd_array[fd_tail + j] = incoming_sock;
+                    fd_array[fd_tail] = incoming_sock;
+                    fd_tail = fd_tail + 1;
                 }
                 else{
                     if(accept_connections < expected_connections){
-                        printf("e->data.fd:%d\n", e->data.fd);
+                        //printf("highest fd: %d\n", fd_array[fd_tail-1]);
+                        printf("accept fds: %d, expected fds: %d\n", accept_connections, expected_connections);
                         continue;                    
                     }
+
+                    // if(e->data.fd == fd_array[fd_tail-1]){
+                    //     printf("closed-loop e->data.fd:%d\n", e->data.fd);
+                    //     if(e->events == EPOLLIN){
+                    //         printf("event:EPOLLIN \n");
+                    //     }
+                    //     else if(e->events == EPOLLET){
+                    //         printf("event:EPOLLET \n");
+                    //     }
+                    //     else if( e->events == EPOLLHUP){
+                    //         perror("\n-------\nevent:EPOLLHUP\n--------\n");
+                    //         continue;
+                    //     }
+                    //     else if( e->events == EPOLLERR){
+                    //         perror("\n-------\nevent:EPOLLERR\n--------\n");
+                    //         continue;
+                    //     }
+                    //     else if( e->events == EPOLLRDHUP){
+                    //         perror("\n-------\nevent:EPOLLERR\n--------\n");
+                    //         continue;
+                    //     }
+                    // }
 
                     ssize_t numBytes = 0;
                     ssize_t recv_byte_perloop = 0;
                     ssize_t send_byte_perloop = 0;
+                    int recv_retries = 0; 
+                    int send_retries = 0;                    
                     while(recv_byte_perloop < 20){
                         numBytes = recv(e->data.fd, recv_buffer, 20, MSG_DONTWAIT);
                         if (numBytes < 0){
@@ -276,18 +315,37 @@ int main(int argc, char *argv[]) {
                                 continue;
                             }
                             else{
-                                perror("recv() failed\n"); 
-                                exit(1);
+                                printf("recv() failed on fd:%d\n", e->data.fd); 
+                                //exit(1);
+                                send_byte_perloop = 20;
+                                break;
                             }
                         }
-                        else if (numBytes == 0 && recv_byte_perloop == 20){
-                            break;
+                        else if (numBytes == 0){ //&& recv_byte_perloop == 20){
+                            if(recv_byte_perloop == 20){
+                                break;
+                            }
+                            else{
+                                recv_retries++;
+                                printf("recv 0 byte on fd:%d\n", e->data.fd);
+                                if(recv_retries == max_retries){
+                                    send_byte_perloop = 20; //force it not entering send-loop
+                                    break;
+                                }
+                                else{
+                                    continue;
+                                }
+                            }
                         }
                         else{
                             recv_byte_perloop = recv_byte_perloop + numBytes;
                             //printf("recv:%zd\n", numBytes);
                         }
                     }
+
+                    //clock_gettime(CLOCK_REALTIME, &ts1);
+                    //sleep_ts1=ts1;
+                    //realnanosleep(10*1000, &sleep_ts1, &sleep_ts2); // processing time 10 us
 
                     while(send_byte_perloop < 20){
                         numBytes = send(e->data.fd, send_buffer, 20, MSG_DONTWAIT);
@@ -296,12 +354,25 @@ int main(int argc, char *argv[]) {
                                 continue;
                             }
                             else{
-                                perror("send() failed\n"); 
-                                exit(1);
+                                printf("send() failed on fd:%d\n", e->data.fd); 
+                                //exit(1);
+                                break;
                             }
                         }
-                        else if (numBytes == 0 && send_byte_perloop == 20){
-                            break;
+                        else if (numBytes == 0 ){
+                            if(send_byte_perloop == 20){
+                                break;
+                            }
+                            else{
+                                send_retries++;
+                                printf("send 0 byte on fd:%d\n", e->data.fd);
+                                if(send_retries == max_retries){
+                                    break;
+                                }
+                                else{
+                                    continue;
+                                }
+                            }
                         }
                         else{
                             send_byte_perloop = send_byte_perloop + numBytes;                
@@ -309,7 +380,6 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-            //fd_tail = fd_tail + num_events;
         }
     }
 

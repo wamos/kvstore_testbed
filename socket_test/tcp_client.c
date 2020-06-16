@@ -22,7 +22,7 @@ int main(int argc, char *argv[]) {
     const char log[] = ".log";
     char logfilename[100];
     snprintf(logfilename, sizeof(delay_duration) + sizeof(log) + 30, "%s%s%s", delay_duration, delay_time, log);
-    FILE* fp = fopen(logfilename,"w+");
+    //FILE* fp = fopen(logfilename,"w+");
 
 	char sendbuffer[20];
 	memset(&sendbuffer, 1, sizeof(sendbuffer));
@@ -50,6 +50,11 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    if(SetTCPNoDelay(send_sock, 1) == -1){
+        perror("setsockopt TCP_NODELAY error\n");
+        exit(1);
+    }
+
 	//clock_gettime(CLOCK_REALTIME, &starttime_spec);
 	for(int iter = 0; iter < ITERS; iter++){
 		//api ref: ssize_t send(int sockfd, const void *buf, size_t len, int flags);
@@ -60,14 +65,14 @@ int main(int argc, char *argv[]) {
 			printf("send() failed\n");
             exit(1);
         }else{
-            //printf("send:%zd\n", numBytes);
+            printf("send:%zd\n", numBytes);
         }
 
         numBytes = recv(send_sock, recvbuffer, 20, 0);
-        clock_gettime(CLOCK_REALTIME, &ts2);
+        //clock_gettime(CLOCK_REALTIME, &ts2);
 
-        sleep_ts1 = ts2;
-        realnanosleep(wait_interval, &sleep_ts1, &sleep_ts2);
+        //sleep_ts1 = ts2;
+        //realnanosleep(wait_interval, &sleep_ts1, &sleep_ts2);
 
         if (numBytes < 0){
 			printf("recv() failed\n");
@@ -78,20 +83,22 @@ int main(int argc, char *argv[]) {
         }
         else{
             if(ts1.tv_sec == ts2.tv_sec){
-                fprintf(fp,"%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec); 
+                //fprintf(fp,"%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec); 
+                printf("%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec); 
             }
             else{ 
                 uint64_t ts1_nsec = ts1.tv_nsec + 1000000000*ts1.tv_sec;
                 uint64_t ts2_nsec = ts2.tv_nsec + 1000000000*ts2.tv_sec;                    
-                fprintf(fp,"%" PRIu64 "\n", ts2_nsec - ts1_nsec);
+                //fprintf(fp,"%" PRIu64 "\n", ts2_nsec - ts1_nsec);
+                printf("%" PRIu64 "\n", ts2_nsec - ts1_nsec);
             }    
 
-            //printf("recv:%zd\n", numBytes);
+            printf("recv:%zd\n", numBytes);
         }
 	}
 
 	close(send_sock);
-    fclose(fp);
+    //fclose(fp);
 
   	exit(0);
 }

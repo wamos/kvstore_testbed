@@ -93,6 +93,11 @@ int main(int argc, char *argv[]) {
     memset(&clntAddr, 0, sizeof(clntAddr));
 
     recv_sock = recv_socket_setup(listen_sock, servAddr, clntAddr);
+
+    if(SetTCPNoDelay(recv_sock, 1) == -1){
+        perror("setsockopt TCP_NODELAY error\n");
+        exit(1);
+    }
     
     memset(&recv_buffer, 0, sizeof(recv_buffer));
     memset(&send_buffer, 0, sizeof(send_buffer));
@@ -110,7 +115,7 @@ int main(int argc, char *argv[]) {
             printf("recv no bytes\n");
         }
         else{
-            //printf("recv:%zd\n", numBytes);
+            printf("recv:%zd\n", numBytes);
         }
 
         clock_gettime(CLOCK_REALTIME, &ts1);
@@ -122,7 +127,7 @@ int main(int argc, char *argv[]) {
 			printf("send() failed\n");
             exit(1);
         }else{
-            //printf("send:%zd\n", numBytes);
+            printf("send:%zd\n", numBytes);
         }
 
 	}
