@@ -108,7 +108,7 @@ int main(int argc, char *argv[]) {
 	char* recv_ip_addr = argv[1];     // 1st arg: server IP address (dotted quad)
     in_port_t recv_port_start = (in_port_t) (argc > 2) ? strtoul(argv[2], NULL, 10) : 7000;
     // assume 4 pseudo-connections per open-loop thread and only 1 closed-loop pseudo-connection
-    uint32_t expected_connections = (argc > 3) ? atoi(argv[3])*4+1: 20; // pseudo-connection for UDP
+    uint32_t expected_connections = (argc > 3) ? atoi(argv[3])*4+1: 1; // pseudo-connection for UDP
     struct timespec ts1, ts2, sleep_ts1, sleep_ts2;
 
     ssize_t numBytesRcvd;
@@ -147,7 +147,7 @@ int main(int argc, char *argv[]) {
         servAddr.sin_addr.s_addr = inet_addr(recv_ip_addr);
         servAddr.sin_port = htons(recv_port_start); 
         server_addr_array[server_index] = servAddr;
-        recv_port_start++; //ecv_port_start + 1;
+        recv_port_start++;
 
         if(UDPSocketSetup(udp_socket_array[server_index], servAddr) == -1){
             perror("UDPSocketSetup error\n"); 
@@ -235,8 +235,9 @@ int main(int argc, char *argv[]) {
                 ssize_t send_byte_perloop = 0;
                 int recv_retries = 0; 
                 int send_retries = 0;                    
-                while(recv_byte_perloop < 20){
-                    numBytes = recvfrom(udp_socket_array[sock_index], (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
+                while(recv_byte_perloop < sizeof(alt_header)){
+                    //numBytes = recvfrom(udp_socket_array[sock_index], (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
+                    numBytes = recvfrom(e->data.fd, (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
                     //numBytes = recv(e->data.fd, recv_buffer, 20, MSG_DONTWAIT);
                     if (numBytes < 0){
                         if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
@@ -268,18 +269,20 @@ int main(int argc, char *argv[]) {
                         recv_byte_perloop = recv_byte_perloop + numBytes;
                         //printf("recv:%zd on fd %d\n", numBytes, e->data.fd);
                     }
-                    }
+                }
 
                     //clock_gettime(CLOCK_REALTIME, &ts1);
                     //sleep_ts1=ts1;
                     //realnanosleep(10*1000, &sleep_ts1, &sleep_ts2); // processing time 10 us
 
-                while(send_byte_perloop < 20){
+                while(send_byte_perloop < sizeof(alt_header)){
                     //numBytes = send(e->data.fd, send_buffer, 20, MSG_DONTWAIT);
                     alt_send_header.alt_dst_ip = server_addr_array[sock_index].sin_addr.s_addr;
-                    ssize_t numBytes = sendto(udp_socket_array[sock_index], (void*) &alt_send_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
+                    ssize_t numBytes = sendto(e->data.fd, (void*) &alt_send_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));                    
+                    //ssize_t numBytes = sendto(udp_socket_array[sock_index], (void*) &alt_send_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
                     if (numBytes < 0){
                         if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
+                            printf("EAGAIN on fd:%d\n", e->data.fd);
                             continue;
                         }
                         else{
@@ -293,14 +296,15 @@ int main(int argc, char *argv[]) {
                             break;
                         }
                         else{
-                            send_retries++;
+                            printf("send 0 byte on fd:%d\n", e->data.fd);
+                            /*send_retries++;
                             printf("send 0 byte on fd:%d\n", e->data.fd);
                             if(send_retries == max_retries){
                                 break;
                             }
                             else{
                                 continue;
-                            }
+                            }*/
                         }
                     }
                     else{
