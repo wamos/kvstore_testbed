@@ -17,7 +17,7 @@
 // uint64_t tcpSend(int fd ,char *buffer, uint64_t buf_size);
 // uint64_t tcpReceive(int fd, char *buffer, uint64_t buf_size);
 
-#define ITERS 1000*1000
+#define ITERS 100*1000
 
 typedef struct __attribute__((__packed__)) {
   uint16_t service_id;    // Type of Service.

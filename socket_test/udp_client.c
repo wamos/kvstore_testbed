@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
     Alt.service_id = 1;
     Alt.request_id = 0;
     Alt.packet_id = 0;
-    Alt.options = 1;
+    Alt.options = 10;
     Alt.alt_dst_ip = inet_addr(destIP);
     //printf("sizeif Alt: %ld\n", sizeof(Alt));
 

@@ -16,7 +16,13 @@
 static const int MAXPENDING = 5; // Maximum outstanding connection requests
 static const int SERVER_BUFSIZE = 1024*16;
 
-int server_socket_setup(int servSock, struct sockaddr_in servAddr){
+void* fake_mainloop(void *arg){
+    int num = *(int*) arg;
+    printf("fake mainloop:%d\n", num);
+    return NULL;
+}
+
+int UDPSocketSetup(int servSock, struct sockaddr_in servAddr){
     int clntSock;
     // Bind to the local address
 	if (bind(servSock, (struct sockaddr*) &servAddr, sizeof(servAddr)) < 0){
@@ -32,13 +38,6 @@ int server_socket_setup(int servSock, struct sockaddr_in servAddr){
     }
 
     return 0;
-}
-
-void send_socket_setup(int send_sock, struct sockaddr_in servAddr){    
-    if (connect(send_sock, (struct sockaddr *) &servAddr, sizeof(servAddr)) < 0){
-		printf("connect() failed\n");
-        exit(1);
-    }
 }
 
 int main(int argc, char *argv[]) {
@@ -82,7 +81,7 @@ int main(int argc, char *argv[]) {
     memset(&clntAddr, 0, sizeof(clntAddr));
     int clntAddrLen = sizeof(clntAddr);
 
-    server_socket_setup(listen_sock, servAddr);
+    UDPSocketSetup(listen_sock, servAddr);
     //server_socket_setup(send_sock, routerAddr);
 
     //memset(&recv_buffer, 0, sizeof(recv_buffer));
@@ -144,7 +143,7 @@ int main(int argc, char *argv[]) {
             alt_response.service_id = 1;
             alt_response.request_id = 0;
             alt_response.packet_id = 0;
-            alt_response.options = 1;
+            alt_response.options = 10;
             alt_response.alt_dst_ip = clntAddr.sin_addr.s_addr;
 
             //printf("service_id:%" PRIu16 ",", alt_response.service_id);
