@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <inttypes.h>
-#include <netinet/tcp.h>
+//#include <netinet/tcp.h>
 #include "socket_operation.h"
 
 static const int MAXPENDING = 5; // Maximum outstanding connection requests

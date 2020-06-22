@@ -9,7 +9,7 @@
 #include <sys/socket.h>
 #include <errno.h>
 #include <arpa/inet.h>
-#include <linux/tcp.h>
+//#include <linux/tcp.h>
 #include "socket_operation.h"
 
 int main(int argc, char *argv[]) {

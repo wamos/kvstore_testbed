@@ -5,6 +5,8 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <linux/tcp.h>
+//#include <netinet/tcp.h>
 
 // typedef struct socket_data {
 //     int fd;
@@ -17,15 +19,30 @@
 // uint64_t tcpSend(int fd ,char *buffer, uint64_t buf_size);
 // uint64_t tcpReceive(int fd, char *buffer, uint64_t buf_size);
 
-#define ITERS 100*1000
+#define ITERS 20 //100*1000
 
 typedef struct __attribute__((__packed__)) {
   uint16_t service_id;    // Type of Service.
   uint16_t request_id;    // Request identifier.
   uint16_t packet_id;     // Packet identifier.
   uint16_t options;       // Options (could be request length etc.).
-  in_addr_t alt_dst_ip;
+  in_addr_t alt_dst_ip1;
+  in_addr_t alt_dst_ip2;
+  //in_addr_t alt_dst_ip3;
 } alt_header;
+
+typedef struct {
+    //per thread state
+    uint32_t tid;
+    uint32_t feedback_period_us;
+    uint32_t feedback_counter; 
+    // fd related states
+    int fd;     
+    struct sockaddr_in server_addr; 
+    // send/recv buffer
+    alt_header send_header;
+    alt_header recv_header;     
+} feedback_thread_state; // per thread stats
 
 int SetTCPNoDelay(int sock, int flag){
     if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) == -1){
