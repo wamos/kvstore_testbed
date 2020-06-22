@@ -51,7 +51,8 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
-socket_test/client
-socket_test/server
-multithread/client
-multithread/server
+socket_test/*_client
+socket_test/*_server
+multithread/build/
+log/
+.vscode/
