@@ -9,7 +9,6 @@
 #include <sys/socket.h>
 #include <errno.h>
 #include <arpa/inet.h>
-#include <linux/tcp.h>
 #include "socket_operation.h"
 
 int main(int argc, char *argv[]) {
@@ -54,7 +53,7 @@ int main(int argc, char *argv[]) {
     Alt.request_id = 0;
     Alt.packet_id = 0;
     Alt.options = 10;
-    Alt.alt_dst_ip = inet_addr(destIP);
+    Alt.alt_dst_ip1 = inet_addr(destIP);
     //printf("sizeif Alt: %ld\n", sizeof(Alt));
 
     alt_header recv_alt;
@@ -65,7 +64,7 @@ int main(int argc, char *argv[]) {
 		//api ref: ssize_t send(int sockfd, const void *buf, size_t len, int flags);
         clock_gettime(CLOCK_REALTIME, &ts1);
         ssize_t send_bytes = 0;
-        while(send_bytes < sizeof(Alt)){
+        while(send_bytes < sizeof(alt_header)){
             if(is_direct_to_server)
                 numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &servAddr, (socklen_t) servAddrLen); 
             else
@@ -77,14 +76,14 @@ int main(int argc, char *argv[]) {
             }
             else{
                 send_bytes = send_bytes + numBytes;
-                //printf("send:%zd\n", numBytes);
+                printf("send:%zd\n", numBytes);
             }
         }
         Alt.request_id = Alt.request_id + 1;
         Alt.packet_id = Alt.packet_id + 1;
         
         ssize_t recv_bytes = 0;
-        while(recv_bytes < 12){
+        while(recv_bytes < sizeof(alt_header)){
             numBytes = recvfrom(send_sock, (void*) &recv_alt, sizeof(recv_alt), 0, (struct sockaddr *) &servAddr, (socklen_t*) &servAddrLen);
 
             if (numBytes < 0){
@@ -102,7 +101,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 recv_bytes = recv_bytes +  numBytes;
-                //printf("recv:%zd\n", numBytes);
+                printf("recv:%zd\n", numBytes);
             } 
         }
         clock_gettime(CLOCK_REALTIME, &ts2);

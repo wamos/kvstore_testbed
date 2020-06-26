@@ -9,7 +9,6 @@
 #include <unistd.h>
 #include <time.h>
 #include <inttypes.h>
-#include <netinet/tcp.h>
 #include "socket_operation.h"
 #include <errno.h>
 
@@ -93,11 +92,11 @@ int main(int argc, char *argv[]) {
     memset(&alt_response, 0, sizeof(alt_header));
     ssize_t numBytesRcvd = 0;
     
-	while(numBytesRcvd < 12*ITERS) {
+	while(numBytesRcvd < sizeof(alt_header)*ITERS) {
         //printf("enter while loop\n");
 
         ssize_t recv_bytes = 0;
-        while(recv_bytes < 12){
+        while(recv_bytes < sizeof(alt_header)){
             //printf("enter recv loop\n");
             ssize_t numBytes = recvfrom(listen_sock, (void*)&Alt, sizeof(Alt), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
             if (numBytes < 0){
@@ -131,27 +130,27 @@ int main(int argc, char *argv[]) {
 
                 recv_bytes = recv_bytes +  numBytes;
                 numBytesRcvd = numBytesRcvd + numBytes;
-                //printf("recv:%zd\n", numBytes);
+                printf("recv:%zd\n", numBytes);
             }
         }
 
 
 
         ssize_t send_bytes = 0;
-        while(send_bytes < 12){
+        while(send_bytes < sizeof(alt_header)){
             //ssize_t numBytes = sendto(send_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
             alt_response.service_id = 1;
             alt_response.request_id = 0;
             alt_response.packet_id = 0;
             alt_response.options = 10;
-            alt_response.alt_dst_ip = clntAddr.sin_addr.s_addr;
+            alt_response.alt_dst_ip1 = clntAddr.sin_addr.s_addr;
 
             //printf("service_id:%" PRIu16 ",", alt_response.service_id);
             //printf("request_id:%" PRIu32 ",", alt_response.request_id);
             //printf("packet_id:%" PRIu32 ",", alt_response.packet_id);
             //printf("options:%" PRIu32 ",", alt_response.options);
             struct in_addr dest_addr;
-            dest_addr.s_addr = alt_response.alt_dst_ip;
+            dest_addr.s_addr = alt_response.alt_dst_ip1;
             char* dest_ip =inet_ntoa(dest_addr);
             //printf("alt_dst_ip:%s\n", dest_ip);
 
@@ -166,7 +165,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 send_bytes = send_bytes + numBytes;
-                //printf("send:%zd\n", numBytes);
+                printf("send:%zd\n", numBytes);
             }
         }
 
