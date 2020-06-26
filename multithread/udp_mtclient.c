@@ -22,7 +22,8 @@
 
 #define OPEN_LOOP_ENABLE 1
 #define MAX_NUM_REQ 100*1000
-#define MAX_NUM_SAMPLE 100*1000
+#define MAX_NUM_SAMPLE 100*1000 //100*1000
+
 //#define MAX_PENDING_REQ 20
 
 typedef struct __attribute__((__packed__)) {
@@ -31,6 +32,7 @@ typedef struct __attribute__((__packed__)) {
   uint16_t packet_id;     // Packet identifier.
   uint16_t options;       // Options (could be request length etc.).
   in_addr_t alt_dst_ip;
+  in_addr_t alt_dst_ip2;
 } alt_header;
 
 typedef struct {
@@ -112,9 +114,11 @@ void* openloop_multiple_connections(void *arg){
     uint64_t next_send = clock_gettime_us(&ts1);
 
     ssize_t numBytes = 0;
-    //while(state->recv_bytes < state->conn_perthread*(MAX_NUM_REQ)*20 ){        
+    state->sent_req++;
+    //while(state->completed_req < state->sent_req){ 
     while(!closed_loop_done){
         current_time = clock_gettime_us(&ts2);
+        //while( current_time >= next_send && state->sent_req < MAX_NUM_REQ*state->conn_perthread){
         while( current_time >= next_send && !closed_loop_done){
             uint32_t req_id = state->sent_req;
             if(req_id > MAX_NUM_REQ){
@@ -127,10 +131,10 @@ void* openloop_multiple_connections(void *arg){
             int servAddrLen = sizeof(conn_list[send_conn_id].server_addr);
             ssize_t send_bytes = 0;
             while(send_bytes < sizeof(alt_header)){
-                if(is_direct_to_server)
+                //if(is_direct_to_server)
                     numBytes = sendto(conn_list[send_conn_id].fd, (void*) &conn_list[send_conn_id].send_header, sizeof(alt_header), 0, (struct sockaddr *) &conn_list[send_conn_id].server_addr, (socklen_t) servAddrLen); 
-                else
-                    numBytes = sendto(conn_list[send_conn_id].fd, (void*) &conn_list[send_conn_id].send_header, sizeof(alt_header), 0, (struct sockaddr *) &routerAddr, (socklen_t) routerAddrLen);
+                //else
+                    //numBytes = sendto(conn_list[send_conn_id].fd, (void*) &conn_list[send_conn_id].send_header, sizeof(alt_header), 0, (struct sockaddr *) &routerAddr, (socklen_t) routerAddrLen);
 
                 if (numBytes < 0){
                     printf("send() failed\n");
@@ -143,7 +147,10 @@ void* openloop_multiple_connections(void *arg){
                 }
             }
             state->sent_req++; // update the sent_req counter for the thread
-            send_conn_id = (send_conn_id + 1)%state->conn_perthread;        
+            send_conn_id = (send_conn_id + 1)%state->conn_perthread;
+            //if(send_conn_id == 3)
+            //printf("send_conn_id:%" PRIu32 "\n", send_conn_id);
+
             current_time = clock_gettime_us(&ts2);   
 
             /*if(state->send_bytes == state->conn_perthread*MAX_NUM_REQ*sizeof(alt_header) && once == 0 ){
@@ -161,7 +168,8 @@ void* openloop_multiple_connections(void *arg){
                 //printf("events fd:%d, conn_list fd:%d\n", state->epstate.events[i].data.fd, conn_list[conn_index].fd);
                 ssize_t recv_byte_perloop = 0;
                 while(recv_byte_perloop < sizeof(alt_header)){
-                    numBytes = recvfrom(conn_list[conn_index].fd, (void*) &conn_list[send_conn_id].recv_header, sizeof(alt_header), 0, (struct sockaddr *) &conn_list[send_conn_id].server_addr, (socklen_t*) &servAddrLen);                                        
+                    //numBytes = recvfrom(state->epstate.events[i].data.fd, (void*) &conn_list[conn_index].recv_header, sizeof(alt_header), 0, (struct sockaddr *) &conn_list[conn_index].server_addr, (socklen_t*) &servAddrLen);
+                    numBytes = recvfrom(conn_list[conn_index].fd, (void*) &conn_list[conn_index].recv_header, sizeof(alt_header), MSG_DONTWAIT, (struct sockaddr *) &conn_list[conn_index].server_addr, (socklen_t*) &servAddrLen);
                     if (numBytes < 0){
                         if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
                             continue;
@@ -178,7 +186,9 @@ void* openloop_multiple_connections(void *arg){
                     }                
                 }
                 //printf("thread id %" PRIu32 ",conn id %" PRIu32 ",recv %zd\n", state->tid, conn_index, numBytes);
-                //printf("*** thread id %" PRIu32 ", send:%" PRId64 ", recv:%" PRId64 "\n", state->tid, state->send_bytes ,state->recv_bytes);        
+                if(state->completed_req%1000 == 0){
+                    printf("*** thread id %" PRIu32 ", send:%" PRIu32 ", recv:%" PRIu32 "\n", state->tid, state->sent_req ,state->completed_req);        
+                }
                 state->completed_req+=1;
             }
         }
@@ -211,10 +221,10 @@ void* closedloop_latency_measurement(void *arg){
         ssize_t send_byte_perloop = 0;
         
         while(send_byte_perloop < sizeof(alt_header)){
-            if(is_direct_to_server)
+            //if(is_direct_to_server)
                 numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &state->server_addr, (socklen_t) servAddrLen); 
-            else
-                numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &routerAddr, (socklen_t) routerAddrLen);
+            //else
+                //numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &routerAddr, (socklen_t) routerAddrLen);
 
             if (numBytes < 0){
                 if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
@@ -270,6 +280,7 @@ void* closedloop_latency_measurement(void *arg){
 int main(int argc, char *argv[]) {
 	char* router_ip_addr = (argc > 1) ? argv[1]: "10.0.0.18"; // server IP address (dotted quad)
     char* recv_ip_addr = (argc > 2) ? argv[2]: "10.0.0.9";     // 2nd arg: alt dest ip addr;
+    char* recv_ip_addr2 = "10.0.0.8"; 
     in_port_t recv_port_start = (in_port_t) (argc > 3) ? strtoul(argv[3], NULL, 10) : 7000;
     uint32_t num_threads_openloop = (uint32_t) (argc > 4) ? atoi(argv[4]): 10;
     uint32_t num_threads_closedloop = (uint32_t) (argc > 5) ? atoi(argv[5]): 1;
@@ -336,26 +347,43 @@ int main(int argc, char *argv[]) {
         }
 
         uint32_t event_flag = EPOLLIN | EPOLLET;
-        int conn_fd;
+        //int conn_fd;
         for(uint32_t conn_index = 0; conn_index < conn_perthread; conn_index++){
-            conn_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            openloop_thread_state[thread_id].conn_list[conn_index].fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if(openloop_thread_state[thread_id].conn_list[conn_index].fd == -1){
+                printf("socket creation fails\n");
+                exit(1);
+            }
 
             struct sockaddr_in servAddr;
             memset(&servAddr, 0, sizeof(servAddr));
-            servAddr.sin_family = AF_INET; 
-            servAddr.sin_addr.s_addr = inet_addr(recv_ip_addr);
+            servAddr.sin_family = AF_INET;
+
+            if(is_direct_to_server) 
+                servAddr.sin_addr.s_addr = inet_addr(recv_ip_addr);
+            else // to the router
+                servAddr.sin_addr.s_addr = inet_addr(router_ip_addr);
+
             servAddr.sin_port = htons(recv_port_start); 
             server_addr_array[server_index] = servAddr;
+            printf("socket:%d,port:%u\n", openloop_thread_state[thread_id].conn_list[conn_index].fd, recv_port_start);
             server_index++;
             recv_port_start++;
 
             openloop_thread_state[thread_id].conn_list[conn_index].server_addr = servAddr;
-            openloop_thread_state[thread_id].conn_list[conn_index].fd = conn_fd;
             openloop_thread_state[thread_id].conn_list[conn_index].tid = thread_id; 
-            memset(&openloop_thread_state[thread_id].conn_list[conn_index].send_header, 1, sizeof(alt_header));
-            memset(&openloop_thread_state[thread_id].conn_list[conn_index].recv_header, 1, sizeof(alt_header));
+            memset(&openloop_thread_state[thread_id].conn_list[conn_index].send_header, 0, sizeof(alt_header));
+            openloop_thread_state[thread_id].conn_list[conn_index].send_header.service_id = 1;
+            openloop_thread_state[thread_id].conn_list[conn_index].send_header.request_id = 0;
+            openloop_thread_state[thread_id].conn_list[conn_index].send_header.packet_id = 0;
+            openloop_thread_state[thread_id].conn_list[conn_index].send_header.options = 10;
+            openloop_thread_state[thread_id].conn_list[conn_index].send_header.alt_dst_ip = inet_addr(recv_ip_addr);
+            openloop_thread_state[thread_id].conn_list[conn_index].send_header.alt_dst_ip2 = inet_addr(recv_ip_addr2);
+
+            memset(&openloop_thread_state[thread_id].conn_list[conn_index].recv_header, 0, sizeof(alt_header));
             //add an event for each connection and assign u32 as the conn index
-            AddEpollEventWithData(&openloop_thread_state[thread_id].epstate, conn_fd, conn_index, event_flag);
+            AddEpollEventWithData(&openloop_thread_state[thread_id].epstate, openloop_thread_state[thread_id].conn_list[conn_index].fd, 
+                conn_index, event_flag);
         }
         
     }
@@ -364,11 +392,11 @@ int main(int argc, char *argv[]) {
     #endif
 
     // router address setup
-	memset(&routerAddr, 0, sizeof(routerAddr)); // Zero out structure
-  	routerAddr.sin_family = AF_INET;          // IPv4 address family
-    routerAddr.sin_port = htons(recv_port_start);    // Server port
-    routerAddr.sin_addr.s_addr = inet_addr(router_ip_addr); // an incoming interface
-    routerAddrLen = sizeof(routerAddr);
+	// memset(&routerAddr, 0, sizeof(routerAddr)); // Zero out structure
+  	// routerAddr.sin_family = AF_INET;          // IPv4 address family
+    // routerAddr.sin_port = htons(recv_port_start);    // Server port
+    // routerAddr.sin_addr.s_addr = inet_addr(router_ip_addr); // an incoming interface
+    // routerAddrLen = sizeof(routerAddr);
     
     //closed-loop connection and thread setup
     printf("setting up closed-loop connection\n");
@@ -381,6 +409,13 @@ int main(int argc, char *argv[]) {
         memset(&closedloop_thread_state[thread_id].recv_header, 0, sizeof(alt_header));
         memset(&closedloop_thread_state[thread_id].send_header, 0, sizeof(alt_header));
 
+        closedloop_thread_state[thread_id].send_header.service_id = 1;
+        closedloop_thread_state[thread_id].send_header.request_id = 0;
+        closedloop_thread_state[thread_id].send_header.packet_id = 0;
+        closedloop_thread_state[thread_id].send_header.options = 10;
+        closedloop_thread_state[thread_id].send_header.alt_dst_ip = inet_addr(recv_ip_addr);
+        closedloop_thread_state[thread_id].send_header.alt_dst_ip2 = inet_addr(recv_ip_addr2);
+
         closedloop_thread_state[thread_id].num_req = 0;
         closedloop_thread_state[thread_id].send_bytes = 0;
         closedloop_thread_state[thread_id].recv_bytes = 0;
@@ -388,10 +423,18 @@ int main(int argc, char *argv[]) {
         struct sockaddr_in servAddr;
         memset(&servAddr, 0, sizeof(servAddr));
         servAddr.sin_family = AF_INET; 
+
         servAddr.sin_addr.s_addr = inet_addr(recv_ip_addr);
+
+        if(is_direct_to_server) 
+            servAddr.sin_addr.s_addr = inet_addr(recv_ip_addr);
+        else // to the router
+            servAddr.sin_addr.s_addr = inet_addr(router_ip_addr);
+        
         servAddr.sin_port = htons(recv_port_start); 
         server_addr_array[server_index] = servAddr;                        
         closedloop_thread_state[thread_id].server_addr = servAddr;
+        printf("socket:%d,port:%u\n",  closedloop_thread_state[thread_id].fd, recv_port_start);
     }
 
     //closed-loop file setup
@@ -458,7 +501,8 @@ int main(int argc, char *argv[]) {
         //close epoll fd and free its associated event list
         CloseEpoll(&openloop_thread_state[thread_id].epstate);        
         printf("thread id %" PRIu32 ":", openloop_thread_state[thread_id].tid);
-        printf("req:%" PRIu32 ",", openloop_thread_state[thread_id].completed_req);
+        printf("sent req:%" PRIu32 ",", openloop_thread_state[thread_id].sent_req);
+        printf("completed req:%" PRIu32 ",", openloop_thread_state[thread_id].completed_req);
         printf("send:%" PRId64 ",", openloop_thread_state[thread_id].send_bytes);
         printf("recv:%" PRId64 "\n", openloop_thread_state[thread_id].recv_bytes);        
     }

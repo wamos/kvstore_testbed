@@ -23,6 +23,7 @@ typedef struct __attribute__((__packed__)) {
   uint16_t packet_id;     // Packet identifier.
   uint16_t options;       // Options (could be request length etc.).
   in_addr_t alt_dst_ip;
+  in_addr_t alt_dst_ip2;
 } alt_header;
 
 int UDPSocketSetup(int servSock, struct sockaddr_in servAddr){
@@ -70,7 +71,7 @@ int SetSocketNonblocking(int servSock){
     return 0;
 }
 
-int isFoundInArray(int* fd_array, uint32_t array_length, int fd){
+int isFoundInArray(int* fd_array, int array_length, int fd){
     for(int index = 0; index < array_length; index++){
         if(fd_array[index] == fd)
             return index;
@@ -115,9 +116,9 @@ int main(int argc, char *argv[]) {
     ssize_t numBytesSend;
     int conn_count = 1;
     int setsize = 10240;
-    int fd_array[1024];
-    uint32_t fd_tail = 0; //int fd_head = 0;
-    memset(&fd_array, -1, sizeof(fd_array));
+    int* fd_array = (int *) malloc(1024 * sizeof(int) );
+    int fd_tail = 0; //int fd_head = 0;
+    //memset(&fd_array, -1, sizeof(fd_array));
     
     epollState epstate;
     epstate.epoll_fd = -1;
@@ -136,6 +137,7 @@ int main(int argc, char *argv[]) {
     server_addr_array = (struct sockaddr_in *) malloc( expected_connections * sizeof(struct sockaddr_in) );
 
     for(int server_index = 0; server_index < expected_connections; server_index++){
+        printf("socket creation,");
         if ((udp_socket_array[server_index] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0){
 		    perror("socket() failed\n");
             exit(1);
@@ -147,7 +149,8 @@ int main(int argc, char *argv[]) {
         servAddr.sin_addr.s_addr = inet_addr(recv_ip_addr);
         servAddr.sin_port = htons(recv_port_start); 
         server_addr_array[server_index] = servAddr;
-        recv_port_start++;
+        printf("socket:%d,port:%u\n", udp_socket_array[server_index], recv_port_start);
+        recv_port_start++;        
 
         if(UDPSocketSetup(udp_socket_array[server_index], servAddr) == -1){
             perror("UDPSocketSetup error\n"); 
@@ -176,9 +179,14 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    int total_events = 0;
+    ssize_t total_recv_bytes = 0;
+    ssize_t total_send_bytes = 0;
     int accept_connections = 0;
     int max_retries = 5;
+
+    const char filename_prefix[] = "/home/shw328/kvstore/log/server_fd.txt";
+    FILE* output_fptr = fopen(filename_prefix, "w+");
+
 
     while(1){
         //printf("epoll_wait: waiting for connections\n");
@@ -191,22 +199,25 @@ int main(int argc, char *argv[]) {
 
         if (num_events > 0) {
             //printf("num_events:%d\n", num_events);
+            fprintf(output_fptr,"%d\n", num_events);
+
             for (int j = 0; j < num_events; j++) {
                 struct epoll_event *e = epstate.events+j;
                 //printf("epoll_event->data.fd:%d\n", e->data.fd);
-                if( e->events == EPOLLHUP){
-                    perror("\n-------\nevent:EPOLLHUP\n--------\n");
-                    continue;
-                }
-                else if( e->events == EPOLLERR){
-                    perror("\n-------\nevent:EPOLLERR\n--------\n");
-                    continue;
-                }
-                else if( e->events == EPOLLRDHUP){
-                    perror("\n-------\nevent:EPOLLERR\n--------\n");
-                    continue;
-                }
+                // if( e->events == EPOLLHUP){
+                //     perror("\n-------\nevent:EPOLLHUP\n--------\n");
+                //     continue;
+                // }
+                // else if( e->events == EPOLLERR){
+                //     perror("\n-------\nevent:EPOLLERR\n--------\n");
+                //     continue;
+                // }
+                // else if( e->events == EPOLLRDHUP){
+                //     perror("\n-------\nevent:EPOLLERR\n--------\n");
+                //     continue;
+                // }
 
+                //fprintf(output_fptr,"%d\n", e->data.fd);
                 // if e->data.fd not in fd_array
                 //    add it to fd_array;
                 //    print a new connection;
@@ -214,21 +225,31 @@ int main(int argc, char *argv[]) {
                 // if e->data.fd is in udp_socket_array
                 //    do processing of whatever 
 
-                if (isFoundInArray( &fd_array , fd_tail, e->data.fd) == -1){          
+                /*int sock_index = -1;
+                if (isFoundInArray(fd_array , fd_tail, e->data.fd) == -1){          
                     printf("Accept connections\n");
-                    printf("incoming_sock_fd:%d\n", e->data.fd);
+                    printf("incoming_sock_fd:%d\n", e->data.fd);                    
                     fd_array[fd_tail] = e->data.fd;
-                    fd_tail = fd_tail + 1;
+
+                    fd_tail = fd_tail + 1;                    
                     accept_connections++;
+                    printf("fd_array size: %d\n", fd_tail);
+                    for(int i = 0; i < fd_tail; i++){
+                        printf("%d,", fd_array[i]);
+                    }
+                    printf("\n");                                                           
                     printf("accept fds: %d, expected fds: %d\n", accept_connections, expected_connections);
+                    sock_index = isFoundInArray(udp_socket_array, (int) expected_connections, e->data.fd);
                 }
+                else{
+                    sock_index = isFoundInArray(udp_socket_array, (int) expected_connections, e->data.fd);
+                }*/
 
-                int sock_index = isFoundInArray(udp_socket_array, expected_connections, e->data.fd);
-
-                if(sock_index == -1){
-                    printf("unexpected fd caught by epoll!\n");
-                    exit(1);
-                }
+                // printf("fd_array:");
+                // for(int i = 0; i < fd_tail+1; i++){
+                //    printf("%d,", fd_array[i]);
+                // }
+                // printf("\n");  
 
                 ssize_t numBytes = 0;
                 ssize_t recv_byte_perloop = 0;
@@ -267,6 +288,7 @@ int main(int argc, char *argv[]) {
                     }
                     else{
                         recv_byte_perloop = recv_byte_perloop + numBytes;
+                        total_recv_bytes = total_recv_bytes + numBytes;
                         //printf("recv:%zd on fd %d\n", numBytes, e->data.fd);
                     }
                 }
@@ -277,8 +299,8 @@ int main(int argc, char *argv[]) {
 
                 while(send_byte_perloop < sizeof(alt_header)){
                     //numBytes = send(e->data.fd, send_buffer, 20, MSG_DONTWAIT);
-                    alt_send_header.alt_dst_ip = server_addr_array[sock_index].sin_addr.s_addr;
-                    ssize_t numBytes = sendto(e->data.fd, (void*) &alt_send_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));                    
+                    alt_send_header.alt_dst_ip = server_addr_array[0].sin_addr.s_addr;
+                    ssize_t numBytes = sendto(e->data.fd, (void*) &alt_send_header, sizeof(alt_header), MSG_DONTWAIT, (struct sockaddr *) &clntAddr, sizeof(clntAddr));                    
                     //ssize_t numBytes = sendto(udp_socket_array[sock_index], (void*) &alt_send_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
                     if (numBytes < 0){
                         if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
@@ -309,11 +331,15 @@ int main(int argc, char *argv[]) {
                     }
                     else{
                         send_byte_perloop = send_byte_perloop + numBytes;
+                        total_send_bytes = total_send_bytes + numBytes;
                         //printf("send:%zd on fd %d\n", numBytes, e->data.fd);                
                     }
                 }
             }
-        }
+            //printf("recv:%zd, send:%zd\n", total_recv_bytes, total_send_bytes);
+            //fprintf(output_fptr,"recv:%zd, send:%zd\n", total_recv_bytes, total_send_bytes);
+            //fflush(output_fptr);
+        }        
     }
 
 	printf("closing sockets then\n");
@@ -322,4 +348,5 @@ int main(int argc, char *argv[]) {
     }
     free(server_addr_array);
     free(udp_socket_array);
+    free(fd_array);
 }
