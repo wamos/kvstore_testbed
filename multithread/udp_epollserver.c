@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,11 +12,15 @@
 #include <netinet/tcp.h>
 #include <sys/types.h>
 #include <sys/socket.h> 
+#include <pthread.h>
 #include "nanosleep.h"
 #include "epoll_state.h"
 
 static const int MAXPENDING = 20; // Maximum outstanding connection requests
 static const int SERVER_BUFSIZE = 1024*16;
+int closed_loop_done;
+int queued_events;
+uint64_t pkt_counter;
 
 typedef struct __attribute__((__packed__)) {
   uint16_t service_id;    // Type of Service.
@@ -25,6 +30,75 @@ typedef struct __attribute__((__packed__)) {
   in_addr_t alt_dst_ip;
   in_addr_t alt_dst_ip2;
 } alt_header;
+
+typedef struct {
+    //per thread state
+    uint32_t tid;
+    uint32_t feedback_period_us;
+    uint32_t feedback_counter; 
+    // fd related states
+    int fd;     
+    struct sockaddr_in server_addr; 
+    // send/recv buffer
+    alt_header send_header;
+    alt_header recv_header;     
+} feedback_thread_state; // per thread stats
+
+void* feedback_mainloop(void *arg){
+    feedback_thread_state* state = (feedback_thread_state*) arg;
+    printf("feedback mainloop\n");
+    struct timespec ts1, ts2;
+    ssize_t numBytes = 0;
+    int load_index = 0;
+    uint16_t probe_counter=0;
+
+    cpu_set_t cpuset;
+    pthread_t thread = pthread_self();
+	CPU_ZERO(&cpuset);
+	CPU_SET(state->tid, &cpuset);
+	if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) == -1){
+        printf("pthread_setaffinity_np fails\n");
+    }
+
+    int routerAddrLen = sizeof(state->server_addr);
+    clock_gettime(CLOCK_REALTIME, &ts1);
+    int sec_counter = 0;
+    while(!closed_loop_done){    
+        //printf("while loop\n");
+        //printf("fb: recv_req_count:%d\n", recv_req_count);
+
+        clock_gettime(CLOCK_REALTIME, &ts2);
+        uint64_t diff_us;
+        if(ts1.tv_sec == ts2.tv_sec){
+            diff_us = (uint64_t) (ts2.tv_nsec - ts1.tv_nsec)/1000; 
+        }
+        else{ 
+            uint64_t ts1_nsec = (uint64_t) ts1.tv_nsec + (uint64_t) 1000000000*ts1.tv_sec;
+            uint64_t ts2_nsec = (uint64_t) ts2.tv_nsec + (uint64_t) 1000000000*ts2.tv_sec;                    
+            diff_us = (ts2_nsec - ts1_nsec)/1000;
+        }
+        //printf("diff_us: %" PRIu64 "\n");
+
+        //if(queued_events > 50){ // for 09
+        if(diff_us > 25){ // for 08
+        //if(recv_req_count%10 == 0 && recv_req_count > 0){
+            //printf("diff_us: %" PRIu64 "\n");
+            //printf("probe packets\n");
+            state->send_header.service_id = 10;
+
+            state->send_header.options = (uint16_t) queued_events;  // 09
+            //state->send_header.options = (uint16_t) 50;  // 08
+            state->send_header.alt_dst_ip = inet_addr("10.0.0.18");
+            state->send_header.alt_dst_ip2 = inet_addr("10.0.0.18");
+            numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &state->server_addr, (socklen_t) routerAddrLen);
+            state->feedback_counter++;
+            clock_gettime(CLOCK_REALTIME, &ts1);
+        }        
+    }
+    printf("feedback thread joined\n");
+
+    return NULL;
+}
 
 int UDPSocketSetup(int servSock, struct sockaddr_in servAddr){
     int clntSock;
@@ -110,7 +184,12 @@ int main(int argc, char *argv[]) {
     in_port_t recv_port_start = (in_port_t) (argc > 2) ? strtoul(argv[2], NULL, 10) : 7000;
     // assume 4 pseudo-connections per open-loop thread and only 1 closed-loop pseudo-connection
     uint32_t expected_connections = (argc > 3) ? atoi(argv[3])*4+1: 1; // pseudo-connection for UDP
+    char* identify_string = (argc > 4) ? argv[4]: "test";
+    double rate = (argc > 5)? atof(argv[5]): 10000.0;
     struct timespec ts1, ts2, sleep_ts1, sleep_ts2;
+    char* routerIP = "10.0.0.18"; //argv[1];
+    closed_loop_done = 0;
+    queued_events = 0;
 
     ssize_t numBytesRcvd;
     ssize_t numBytesSend;
@@ -157,7 +236,35 @@ int main(int argc, char *argv[]) {
             exit(1);
         }
     }
-    
+
+    pthread_t *feedback_thread;
+    feedback_thread_state* fbk_state;
+    feedback_thread = (pthread_t *)malloc( 1 * sizeof(pthread_t) );
+    fbk_state = (feedback_thread_state *)malloc( 1 * sizeof(feedback_thread_state) );
+
+    // Init feedback_thread_state fbk_state
+    fbk_state->tid = 0;
+    fbk_state->feedback_period_us = 1000; // 1000 microseconds period for feedback
+    fbk_state->feedback_counter = 0;
+
+    if ((fbk_state->fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0){
+		perror("socket() failed\n");
+        exit(1);
+    }
+
+    struct sockaddr_in routerAddr;                  // Local address
+	memset(&routerAddr, 0, sizeof(routerAddr));       // Zero out structure
+	routerAddr.sin_family = AF_INET;                // IPv4 address family
+	routerAddr.sin_addr.s_addr = inet_addr(routerIP); // an incoming interface
+	routerAddr.sin_port = htons(recv_port_start);          // Local port
+    int routerAddrLen = sizeof(routerAddr);
+
+    fbk_state->server_addr = routerAddr;    
+    memset(&fbk_state->recv_header, 0, sizeof(alt_header));
+    memset(&fbk_state->send_header, 0, sizeof(alt_header));
+    //pthread_create(feedback_thread, NULL, feedback_mainloop, fbk_state);
+
+
     struct sockaddr_in clntAddr; // Client address
     memset(&clntAddr, 0, sizeof(clntAddr));
     int clntAddrLen = sizeof(clntAddr);
@@ -183,12 +290,20 @@ int main(int argc, char *argv[]) {
     ssize_t total_send_bytes = 0;
     int accept_connections = 0;
     int max_retries = 5;
+    pkt_counter=0;
+    uint64_t log_counter=0;
+    int once = 0;    
 
-    const char filename_prefix[] = "/home/shw328/kvstore/log/server_fd.txt";
-    FILE* output_fptr = fopen(filename_prefix, "w+");
+    char logfilename[100];
+    const char log[] = ".qevents";
+    const char filename_prefix[] = "/home/shw328/kvstore/log/";
 
+    snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[3]) +  sizeof(argv[5]) + sizeof(identify_string) +
+        sizeof(log) + 15, "%s%s_%s_%sthd%s", filename_prefix, identify_string, argv[5], argv[3], log);
+    FILE* output_fptr = fopen(logfilename, "w+");
 
     while(1){
+    //while(!closed_loop_done){
         //printf("epoll_wait: waiting for connections\n");
         //printf("accepted connections: %d\n", accept_connections);
         int num_events = epoll_wait(epstate.epoll_fd, epstate.events, setsize, -1);
@@ -199,23 +314,12 @@ int main(int argc, char *argv[]) {
 
         if (num_events > 0) {
             //printf("num_events:%d\n", num_events);
-            fprintf(output_fptr,"%d\n", num_events);
+            //fprintf(output_fptr,"%d\n", num_events);
+            //pkt_counter = pkt_counter + (uint64_t) num_events;
+            //fprintf(output_fptr,"%ld\n", pkt_counter);
 
             for (int j = 0; j < num_events; j++) {
                 struct epoll_event *e = epstate.events+j;
-                //printf("epoll_event->data.fd:%d\n", e->data.fd);
-                // if( e->events == EPOLLHUP){
-                //     perror("\n-------\nevent:EPOLLHUP\n--------\n");
-                //     continue;
-                // }
-                // else if( e->events == EPOLLERR){
-                //     perror("\n-------\nevent:EPOLLERR\n--------\n");
-                //     continue;
-                // }
-                // else if( e->events == EPOLLRDHUP){
-                //     perror("\n-------\nevent:EPOLLERR\n--------\n");
-                //     continue;
-                // }
 
                 //fprintf(output_fptr,"%d\n", e->data.fd);
                 // if e->data.fd not in fd_array
@@ -261,11 +365,11 @@ int main(int argc, char *argv[]) {
                     numBytes = recvfrom(e->data.fd, (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
                     //numBytes = recv(e->data.fd, recv_buffer, 20, MSG_DONTWAIT);
                     if (numBytes < 0){
-                        if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
-                            continue;
+                        if((errno == EAGAIN) || (errno == EWOULDBLOCK)){                            
+                               continue; 
                         }
                         else{
-                            printf("recv() failed on fd:%d\n", e->data.fd); 
+                            printf("recvfrom failed on fd:%d\n", e->data.fd); 
                             send_byte_perloop = 20;
                             break;
                         }
@@ -304,11 +408,12 @@ int main(int argc, char *argv[]) {
                     //ssize_t numBytes = sendto(udp_socket_array[sock_index], (void*) &alt_send_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
                     if (numBytes < 0){
                         if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
-                            printf("EAGAIN on fd:%d\n", e->data.fd);
+                            printf("sendto EAGAIN on fd:%d\n", e->data.fd);
+                            //fprintf(output_fptr,"sendto EAGAIN on fd:%d\n", e->data.fd);
                             continue;
                         }
                         else{
-                            printf("send() failed on fd:%d\n", e->data.fd); 
+                            printf("sendto failed on fd:%d\n", e->data.fd); 
                             //exit(1);
                             break;
                         }
@@ -335,12 +440,25 @@ int main(int argc, char *argv[]) {
                         //printf("send:%zd on fd %d\n", numBytes, e->data.fd);                
                     }
                 }
+
+                /*if(e->data.fd == udp_socket_array[expected_connections-1]){
+                    clock_gettime(CLOCK_REALTIME, &ts2);
+                    uint64_t epoll_delay= clock_gettime_diff_ns(&ts1, &ts2);
+                    //fprintf(output_fptr,"%" PRId64 "\n", epoll_delay);
+                    log_counter++;
+                    if(log_counter%1000==0){
+                        fflush(output_fptr);
+                    }
+                    //printf("closed-loop fd:%d\n", e->data.fd);
+                }*/
             }
             //printf("recv:%zd, send:%zd\n", total_recv_bytes, total_send_bytes);
             //fprintf(output_fptr,"recv:%zd, send:%zd\n", total_recv_bytes, total_send_bytes);
             //fflush(output_fptr);
-        }        
+        }
     }
+    fflush(output_fptr);
+    //pthread_join(*feedback_thread, NULL);
 
 	printf("closing sockets then\n");
     for(int server_index = 0; server_index < expected_connections; server_index++){
