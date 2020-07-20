@@ -76,6 +76,7 @@ pthread_barrier_t all_threads_ready;
 static struct sockaddr_in routerAddr;
 int routerAddrLen;
 int is_direct_to_server;
+int is_random_selection;
 struct timespec ts_start;
 int closed_loop_done;
 
@@ -127,6 +128,19 @@ void* openloop_multiple_connections(void *arg){
             }
             interval = (uint64_t) state->arrival_pattern[req_id];
             next_send = current_time + interval;
+
+            // random replica selection for send dest
+            if(is_random_selection){
+                int replica_num = rand()%2;
+                if(replica_num == 0){
+                    conn_list[send_conn_id].server_addr.sin_addr.s_addr = conn_list[send_conn_id].send_header.alt_dst_ip;
+                    //counter_replica0++;
+                }
+                else{
+                    conn_list[send_conn_id].server_addr.sin_addr.s_addr = conn_list[send_conn_id].send_header.alt_dst_ip2;
+                    //counter_replica1++;
+                }
+            }
 
             int servAddrLen = sizeof(conn_list[send_conn_id].server_addr);
             ssize_t send_bytes = 0;
@@ -212,6 +226,8 @@ void* closedloop_latency_measurement(void *arg){
     printf("closedloop_latency_measurement\n");
     udp_latency_state* state = (udp_latency_state*) arg;
     struct timespec ts1, ts2;
+    uint32_t counter_replica0 = 0;
+    uint32_t counter_replica1 = 0;
 
     cpu_set_t cpuset;
     pthread_t thread = pthread_self();
@@ -228,14 +244,25 @@ void* closedloop_latency_measurement(void *arg){
     int servAddrLen = sizeof(state->server_addr);
     for(int i = 0; i < MAX_NUM_SAMPLE; i++){
         ssize_t numBytes;
+
+        // random replica selection for send dest
+        if(is_random_selection){
+            int replica_num = rand()%2;
+            if(replica_num == 0){
+                state->server_addr.sin_addr.s_addr = state->send_header.alt_dst_ip;
+                counter_replica0++;
+            }
+            else{
+                state->server_addr.sin_addr.s_addr = state->send_header.alt_dst_ip2;
+                counter_replica1++;
+            }
+        }
+
         clock_gettime(CLOCK_REALTIME, &ts1);
         ssize_t send_byte_perloop = 0;
-
+     
         while(send_byte_perloop < sizeof(alt_header)){
-            //if(is_direct_to_server)
-                numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &state->server_addr, (socklen_t) servAddrLen);
-            //else
-                //numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &routerAddr, (socklen_t) routerAddrLen);
+            numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &state->server_addr, (socklen_t) servAddrLen);
 
             if (numBytes < 0){
                 if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
@@ -280,6 +307,8 @@ void* closedloop_latency_measurement(void *arg){
 
     fflush(state->output_fptr);
 
+    printf("replica 0 counter:%" PRIu32 "\n", counter_replica0);
+    printf("replica 1 counter:%" PRIu32 "\n", counter_replica1);
     printf("thread id %" PRIu32 " closing up connection\n", state->tid);
     close(state->fd);
 
@@ -299,9 +328,13 @@ int main(int argc, char *argv[]) {
     char* identify_string = (argc > 7) ? argv[7]: "test";
     double rate = (argc > 8)? atof(argv[8]): 10000.0;
     is_direct_to_server = (argc > 9) ? atoi(argv[9]) : 1;
+    is_random_selection = (argc > 10) ? atoi(argv[10]) : 1;
     const char filename_prefix[] = "/home/shw328/kvstore/log/";
     const char log[] = ".log";
     struct timespec ts1, ts2;
+
+    //seed the rand() function
+    srand(1); 
 
     if(is_direct_to_server)
         printf("client sends directly to server!\n");
@@ -479,8 +512,8 @@ int main(int argc, char *argv[]) {
         openloop_thread_state[thread_id].completed_req = 0;
         openloop_thread_state[thread_id].send_bytes = 0;
         openloop_thread_state[thread_id].recv_bytes = 0;
-        //pthread_create(&openloop_threads[thread_id], NULL, closedloop_multiple_connections, &openloop_thread_state[thread_id]);
         pthread_create(&openloop_threads[thread_id], NULL, openloop_multiple_connections, &openloop_thread_state[thread_id]);
+        //pthread_create(&openloop_threads[thread_id], NULL, closedloop_multiple_connections, &openloop_thread_state[thread_id]);        
         //pthread_create(&openloop_threads[i], NULL, fake_mainloop, (void *) &i);
     }
     #endif
