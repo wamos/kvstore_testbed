@@ -317,6 +317,90 @@ void* closedloop_latency_measurement(void *arg){
     return NULL;
 }
 
+
+void* closedloop_hardware_timestamped_latency(void *arg){
+    printf("closedloop_latency_measurement\n");
+    udp_latency_state* state = (udp_latency_state*) arg;
+    struct timespec ts1, ts2;
+    uint32_t counter_replica0 = 0;
+    uint32_t counter_replica1 = 0;
+    struct msghdr hdr;
+
+    cpu_set_t cpuset;
+    pthread_t thread = pthread_self();
+
+	CPU_ZERO(&cpuset);
+	CPU_SET(state->tid, &cpuset);
+
+	if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) == -1){
+        printf("pthread_setaffinity_np fails\n");
+    }
+
+    int send_flag = MSG_DONTWAIT;
+    int recv_flag = MSG_DONTWAIT;
+    int servAddrLen = sizeof(state->server_addr);
+    for(int i = 0; i < MAX_NUM_SAMPLE; i++){
+        ssize_t numBytes;
+
+        //clock_gettime(CLOCK_REALTIME, &ts1);
+        ssize_t send_byte_perloop = 0;
+     
+        while(send_byte_perloop < sizeof(alt_header)){
+            numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &state->server_addr, (socklen_t) servAddrLen);
+
+            if (numBytes < 0){
+                if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
+                    continue;
+                }
+                else{
+                    printf("thread id %" PRIu32 "send() failed\n", state->tid);
+                    exit(1);
+                }
+            }else{
+                send_byte_perloop = send_byte_perloop + numBytes;
+                state->send_bytes += numBytes;
+                //printf("closed-loop thread id %" PRIu32 ",send:%zd, iter:%d\n", state->tid, numBytes, i);
+            }
+        }
+
+        //printf("closed-loop thread id %" PRIu32 "before recv()\n", state->tid);
+        ssize_t recv_byte_perloop = 0;
+        while(recv_byte_perloop < sizeof(alt_header)){
+            numBytes = recvfrom(state->fd, (void*) &state->recv_header, sizeof(alt_header), 0, (struct sockaddr *) &state->server_addr, (socklen_t*) &servAddrLen);
+            if (numBytes < 0){
+                if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
+                    continue;
+                }
+                else{
+                    printf("thread id %" PRIu32 "recv() failed\n", state->tid);
+                    exit(1);
+                }
+            }else{
+                recv_byte_perloop = recv_byte_perloop + numBytes;
+                state->recv_bytes += numBytes;
+                //printf("recv:%zd\n", numBytes);
+            }
+        }
+
+        //clock_gettime(CLOCK_REALTIME, &ts2);
+        //printf("closed-loop thread id %" PRIu32 ", send:%" PRId64 ", recv:%" PRId64 "\n", state->tid, state->send_bytes ,state->recv_bytes);
+        uint64_t duration = clock_gettime_diff_ns(&ts1,&ts2);
+        fprintf(state->output_fptr,"%" PRIu64 "\n", duration);
+        state->num_req+=1;
+    }
+
+    fflush(state->output_fptr);
+
+    printf("replica 0 counter:%" PRIu32 "\n", counter_replica0);
+    printf("replica 1 counter:%" PRIu32 "\n", counter_replica1);
+    printf("thread id %" PRIu32 " closing up connection\n", state->tid);
+    close(state->fd);
+
+    closed_loop_done = 1;
+
+    return NULL;
+}
+
 int main(int argc, char *argv[]) {
 	char* router_ip_addr = (argc > 1) ? argv[1]: "10.0.0.18"; // server IP address (dotted quad)
     char* recv_ip_addr = (argc > 2) ? argv[2]: "10.0.0.9";     // 2nd arg: alt dest ip addr;

@@ -11,6 +11,9 @@ find_library(LIBM m REQUIRED)
 
 set(WARNING_FLAGS "-Wpedantic -Wconversion -Wall -Wno-unused-variable -Wno-unused-function")
 set(MEMORY_LEAK_CHECK_FLAGS "-fsanitize=address -fno-omit-frame-pointer") #-fno-common")
+#we can use gnu11 not c11 so POSIX and other extensions to standard C are visible by default
+#ref: https://stackoverflow.com/questions/3875197/gcc-with-std-c99-complains-about-not-knowing-struct-timespec
+#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -std=gnu11 -pthread -g -lrt")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -std=c11 -pthread -g -lrt")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${WARNING_FLAGS}")
 
@@ -38,6 +41,9 @@ add_executable(udp_client udp_mtclient.c)
 set_target_properties(udp_client PROPERTIES C_STANDARD 11)
 target_link_libraries(udp_client PRIVATE cpp_dist )
 target_link_libraries(udp_client PRIVATE m)
+
+add_executable(timestamp_test timestamp_test.c timestamping.c)
+#set_target_properties(udp_client PROPERTIES C_STANDARD 99)
 
 add_executable(dist_test dist_test.c)
 target_link_libraries(dist_test PRIVATE cpp_dist )
