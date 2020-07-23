@@ -77,7 +77,7 @@ static int udp_extract_timestamps(struct msghdr *hdr, struct timespec *dest)
 			 */
 			//if (se->ee_errno == ENOMSG &&
 			//	se->ee_origin == SO_EE_ORIGIN_TIMESTAMPING){
-				printf("optid:%u\n",se->ee_data);
+			//printf("optid:%u\n",se->ee_data);
 			//}
 			//else
 				//printf("Received IP_RECVERR: errno = %d %s\n",
