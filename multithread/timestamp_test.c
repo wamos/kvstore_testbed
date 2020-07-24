@@ -6,6 +6,7 @@
 #include "timestamping.h"
 #include "nanosleep.h"
 
+#define HARDWARE_TIMESTAMPING_ENABLE 1
 #define NUM_REQS 1000*100
 
 typedef struct __attribute__((__packed__)) {
@@ -18,7 +19,13 @@ typedef struct __attribute__((__packed__)) {
   //in_addr_t alt_dst_ip3;
 } alt_header;
 
-void print_timespec_ns(struct timespec* ts1){
+typedef struct txrx_timespec{
+    struct timespec send_ts;
+    struct timespec recv_ts;
+} txrx_timespec;
+
+void print_timespec_ns(struct timespec* ts1, const char* str){
+    printf("%s:", str);
 	printf("tv_nsec %ld, tv_sec %ld\n", ts1->tv_nsec, ts1->tv_sec);
 }
 
@@ -59,24 +66,27 @@ int main(int argc, char *argv[]) {
     }
 
     struct timespec ts1, ts2, sleep_ts1, sleep_ts2;
-    struct timespec send_ts, recv_ts;
-    uint32_t opt_id = 0;
-    struct timestamp_info ts_info = {recv_ts, opt_id};    
-
-    if(enable_nic_timestamping(interface_name) < 0){
-        printf("NIC timestamping can't be enabled\n");
-    }
-
-  	// Create a reliable, stream socket using UDP
+    // Create a socket using UDP
 	int send_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (send_sock < 0){
 		printf("socket() failed\n");
         exit(1);
     }
 
+    #ifdef HARDWARE_TIMESTAMPING_ENABLE 
+    struct timespec send_ts, recv_ts;
+    uint32_t opt_id = 0;
+    struct timestamp_info send_info = {send_ts, opt_id};
+    struct timestamp_info recv_info = {recv_ts, opt_id};
+
+    if(enable_nic_timestamping(interface_name) < 0){
+        printf("NIC timestamping can't be enabled\n");
+    }
+
     if(sock_enable_timestamping(send_sock) < 0){
        printf("socket %d timestamping can't be enabled\n", send_sock); 
     }
+    #endif
 
   	// Construct the server address structure
 	// struct sockaddr_in routerAddr;            // Server address
@@ -98,6 +108,8 @@ int main(int argc, char *argv[]) {
     //    printf("UDP socket connect() fails\n");
     //}
     
+    //txrx_timespec hardware_timestamp_array[NUM_REQS]={0};
+    //txrx_timespec system_timestamp_array[NUM_REQS]={0};
     //our alt header
     alt_header Alt;    
     Alt.service_id = 1;
@@ -124,6 +136,7 @@ int main(int argc, char *argv[]) {
         int           msg_flags;      //Flags (unused)
     };
     */
+    #ifdef HARDWARE_TIMESTAMPING_ENABLE 
     struct iovec tx_iovec;
     tx_iovec.iov_base = (void*) &Alt;
     tx_iovec.iov_len = sizeof(alt_header);
@@ -146,17 +159,22 @@ int main(int argc, char *argv[]) {
     rx_hdr.msg_iovlen = 1;
     rx_hdr.msg_control = recv_control;
 	rx_hdr.msg_controllen = CONTROL_LEN;
+    #endif
 
 	//clock_gettime(CLOCK_REALTIME, &starttime_spec);
     ssize_t numBytes = 0;
+    uint32_t last_optid=0;
     int outoforder_timestamp = 0;
 	for(int iter = 0; iter < NUM_REQS; iter++){
 		//api ref: ssize_t send(int sockfd, const void *buf, size_t len, int flags);
         clock_gettime(CLOCK_REALTIME, &ts1);
         ssize_t send_bytes = 0;
         while(send_bytes < sizeof(alt_header)){
-            //numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &servAddr, (socklen_t) servAddrLen); 
+            #ifdef HARDWARE_TIMESTAMPING_ENABLE
             numBytes= sendmsg(send_sock, &tx_hdr, 0);
+            #else
+            numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &servAddr, (socklen_t) servAddrLen); 
+            #endif            
 
             if (numBytes < 0){
                 printf("send() failed\n");
@@ -172,8 +190,11 @@ int main(int argc, char *argv[]) {
         
         ssize_t recv_bytes = 0;
         while(recv_bytes < sizeof(alt_header)){
-            //numBytes = recvfrom(send_sock, (void*) &recv_alt, sizeof(recv_alt), 0, (struct sockaddr *) &servAddr, (socklen_t*) &servAddrLen);
+            #ifdef HARDWARE_TIMESTAMPING_ENABLE
             numBytes = recvmsg(send_sock, &rx_hdr, 0);
+            #else
+            numBytes = recvfrom(send_sock, (void*) &recv_alt, sizeof(recv_alt), 0, (struct sockaddr *) &servAddr, (socklen_t*) &servAddrLen);            
+            #endif            
 
             if (numBytes < 0){
                 if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
@@ -194,55 +215,94 @@ int main(int argc, char *argv[]) {
             } 
         }
 
-        clock_gettime(CLOCK_REALTIME, &sleep_ts1);
-        realnanosleep(1*1000, &sleep_ts1, &sleep_ts2); 
-
-        if(udp_get_tx_timestamp(send_sock, &send_ts) < 0){
-            printf("extracting tx timestamp fails\n");
-            continue;
-        }
-
-        if(extract_timestamp(&rx_hdr, &ts_info) < 0){
-            printf("extracting rx timestamp fails\n");
-        }
-
         clock_gettime(CLOCK_REALTIME, &ts2);
+        //clock_gettime(CLOCK_REALTIME, &sleep_ts1);
+        //realnanosleep(5*1000, &sleep_ts1, &sleep_ts2); 
 
-        //print_timespec_ns(&send_ts);
-        //print_timespec_ns(&ts_info.time);
-        //print_timespec_ns(&ts1);
-        //print_timespec_ns(&ts2);
 
-        //uint64_t recv_stack_overhead = clock_gettime_diff_ns(&ts_info.time, &ts2);
-        //printf("recv_stack_overhead:%" PRIu64 "\n", recv_stack_overhead);
-        uint64_t network_rtt = clock_gettime_diff_ns(&send_ts, &ts_info.time);
-        uint64_t req_rtt = clock_gettime_diff_ns(&ts1,&ts2);
-        if(network_rtt > req_rtt){
-            //fprintf(fp, "%" PRIu64 ",%" PRIu64 "\n", req_rtt, network_rtt);
-            //printf("\n--------------\n network_rtt > req rtt \n--------------\n");
-            //printf("req rtt:%" PRIu64 "\n", req_rtt);
-            //printf("network_rtt:%" PRIu64 "\n", network_rtt);
+        //TODO: fix reordering in tx_timestamps
+        #ifdef HARDWARE_TIMESTAMPING_ENABLE
+        // Handle udp_get_tx_timestamp failures
+        // we can make it a while loop to get the proper tx_timestamp
+        int print_tx_counter = 0;
+        while(udp_get_tx_timestamp(send_sock, &send_info) < 0){
+            if(print_tx_counter){
+                printf("+");
+            }
+            else{
+                printf("extracting tx timestamp fails at iter %d", iter);
+                print_tx_counter++;
+            }
+        }
+        if(print_tx_counter)
+            printf("\n");
+        //hardware_timestamp_array[send_info.optid].send_ts = send_info.time;
+
+        //TODO: solbve the reordering issue with tx_timestamps?
+        if(send_info.optid <= last_optid && send_info.optid!=0){
+            printf("out-of-order based on optid\n");
+            printf("send_info.optid:%u, last_optid:%u\n",send_info.optid,last_optid);
             outoforder_timestamp++;
         }
         else{
-            fprintf(fp, "%" PRIu64 ",%" PRIu64 "\n", req_rtt, network_rtt);
-            //printf("req rtt:%" PRIu64 "\n", req_rtt);
-            //printf("network_rtt:%" PRIu64 "\n", network_rtt);
-        }        
-        
-        /*if(ts1.tv_sec == ts2.tv_sec){
-            fprintf(fp, "%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec); 
+            last_optid = send_info.optid;
         }
-        else{ 
-            uint64_t ts1_nsec = ts1.tv_nsec + 1000000000*ts1.tv_sec;
-            uint64_t ts2_nsec = ts2.tv_nsec + 1000000000*ts2.tv_sec;                    
-            fprintf(fp, "%" PRIu64 "\n", ts2_nsec - ts1_nsec);
-        }*/
+
+        // Handle udp_get_rx_timestamp failures
+        // we can make it a while loop to get the proper rx_timestamp
+        int print_rx_counter = 0;
+        while(udp_get_rx_timestamp(&rx_hdr, &recv_info) < 0){
+            if(print_rx_counter){
+                printf("+");
+            }
+            else{
+                printf("extracting rx timestamp fails");   
+                print_rx_counter++;         
+            }
+        }
+        if(print_rx_counter)
+            printf("\n");
+
+        #endif  
+        //hardware_timestamp_array[send_info.optid].recv_ts = recv_info.time;
+        //system_timestamp_array[send_info.optid].send_ts= ts1;
+        //system_timestamp_array[send_info.optid].recv_ts= ts2;
+
+
+        //print_timespec_ns(&send_info.time, "NIC tx_timestamp");
+        //print_timespec_ns(&recv_info.time, "NIC rx_timestamp");
+        //print_timespec_ns(&ts1, "Sys tx_timestamp");
+        //print_timespec_ns(&ts2, "Sys rx_timestamp");
+
+        //uint64_t recv_stack_overhead = clock_gettime_diff_ns(&ts_info.time, &ts2);
+        //printf("recv_stack_overhead:%" PRIu64 "\n", recv_stack_overhead);
+        #ifdef HARDWARE_TIMESTAMPING_ENABLE
+        uint64_t network_rtt = clock_gettime_diff_ns(&recv_info.time, &send_info.time);
+        uint64_t req_rtt = clock_gettime_diff_ns(&ts1, &ts2);
+        if(network_rtt > req_rtt){
+            fprintf(fp, "%" PRIu64 ",%" PRIu64 "\n", req_rtt, network_rtt);
+            printf("\n--------------\n network_rtt > req rtt \n--------------\n");
+            printf("req rtt:%" PRIu64 "\n", req_rtt);
+            printf("network_rtt:%" PRIu64 "\n", network_rtt);
+        }
+        else{
+            fprintf(fp, "%" PRIu64 ",%" PRIu64 "\n", req_rtt, network_rtt);
+        } 
+        #else
+        uint64_t req_rtt = clock_gettime_diff_ns(&ts1, &ts2);
+        fprintf(fp, "%" PRIu64 "\n", req_rtt);
+        #endif           
 	}
 
+    /*for(int index = 0; index < NUM_REQS; index++){
+        uint64_t network_rtt = clock_gettime_diff_ns(&hardware_timestamp_array[index].recv_ts, &hardware_timestamp_array[index].send_ts);
+        uint64_t req_rtt     = clock_gettime_diff_ns(&system_timestamp_array[index].recv_ts, &system_timestamp_array[index].send_ts);
+        fprintf(fp, "%" PRIu64 ",%" PRIu64 "\n", req_rtt, network_rtt);
+    }*/
+    #ifdef HARDWARE_TIMESTAMPING_ENABLE
     printf("out-of-order timestamps:%d\n", outoforder_timestamp);
-
     disable_nic_timestamping(interface_name);
+    #endif    
 
 	close(send_sock);
     fclose(fp);

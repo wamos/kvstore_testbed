@@ -47,7 +47,7 @@ static int set_timestamping_filter(int fd, char *if_name, int rx_filter,
  * Returns -1 if no new timestamp found
  * 1 if timestamp found
  */
-static int udp_extract_timestamps(struct msghdr *hdr, struct timespec *dest)
+static int udp_extract_timestamps(struct msghdr *hdr, struct timestamp_info *ts_info)
 {
 	struct cmsghdr *cmsg;
 	struct scm_timestamping *ts;
@@ -60,11 +60,12 @@ static int udp_extract_timestamps(struct msghdr *hdr, struct timespec *dest)
 			if (ts->ts[2].tv_sec != 0) {
 				// Make sure we don't get multiple timestamps for the same
 				assert(found == -1);
-				//printf("ts[0]: tv_nsec %ld, tv_sec %ld\n", ts->ts[0].tv_nsec, ts->ts[0].tv_sec);
-				//printf("ts[1]: tv_nsec %ld, tv_sec %ld\n", ts->ts[1].tv_nsec, ts->ts[1].tv_sec);
-				///printf("ts[2]: tv_nsec %ld, tv_sec %ld\n", ts->ts[2].tv_nsec, ts->ts[2].tv_sec);
-				dest->tv_sec = ts->ts[2].tv_sec;
-				dest->tv_nsec = ts->ts[2].tv_nsec;
+				// printf("tx:\n");
+				// printf("ts[0]: tv_nsec %ld, tv_sec %ld\n", ts->ts[0].tv_nsec, ts->ts[0].tv_sec);
+				// printf("ts[1]: tv_nsec %ld, tv_sec %ld\n", ts->ts[1].tv_nsec, ts->ts[1].tv_sec);
+				// printf("ts[2]: tv_nsec %ld, tv_sec %ld\n", ts->ts[2].tv_nsec, ts->ts[2].tv_sec);
+				ts_info->time = ts->ts[2];
+				//ts_info->time.tv_nsec = ts->ts[2].tv_nsec;
 				found = 1;
 			}
 		}
@@ -75,19 +76,20 @@ static int udp_extract_timestamps(struct msghdr *hdr, struct timespec *dest)
 			/*
 			 * Make sure we got the timestamp for the right request
 			 */
-			//if (se->ee_errno == ENOMSG &&
-			//	se->ee_origin == SO_EE_ORIGIN_TIMESTAMPING){
-			//printf("optid:%u\n",se->ee_data);
-			//}
-			//else
-				//printf("Received IP_RECVERR: errno = %d %s\n",
-							  //se->ee_errno, strerror(se->ee_errno));
+			if (se->ee_errno == ENOMSG &&
+				se->ee_origin == SO_EE_ORIGIN_TIMESTAMPING){
+				//printf("tx optid:%u\n", se->ee_data);
+				ts_info->optid = se->ee_data;
+			}
+			else{
+				printf("Received IP_RECVERR: errno = %d %s\n", se->ee_errno, strerror(se->ee_errno));
+			}
 		} 
 	}
 	return found;
 }
 
-int extract_timestamp(struct msghdr *hdr, struct timestamp_info *dest)
+int udp_get_rx_timestamp(struct msghdr *hdr, struct timestamp_info *dest)
 {
 	struct cmsghdr *cmsg;
 	struct scm_timestamping *ts;
@@ -101,9 +103,10 @@ int extract_timestamp(struct msghdr *hdr, struct timestamp_info *dest)
 				// make sure we don't get multiple timestamps for the same
 				//printf("cmsg_type == SCM_TIMESTAMPING\n");
 				assert(found == -1);
-				//printf("ts[0]: tv_nsec %ld, tv_sec %ld\n", ts->ts[0].tv_nsec, ts->ts[0].tv_sec);
-				//printf("ts[1]: tv_nsec %ld, tv_sec %ld\n", ts->ts[1].tv_nsec, ts->ts[1].tv_sec);
-				//printf("ts[2]: tv_nsec %ld, tv_sec %ld\n", ts->ts[2].tv_nsec, ts->ts[2].tv_sec);
+				// printf("rx:\n");
+				// printf("ts[0]: tv_nsec %ld, tv_sec %ld\n", ts->ts[0].tv_nsec, ts->ts[0].tv_sec);
+				// printf("ts[1]: tv_nsec %ld, tv_sec %ld\n", ts->ts[1].tv_nsec, ts->ts[1].tv_sec);
+				// printf("ts[2]: tv_nsec %ld, tv_sec %ld\n", ts->ts[2].tv_nsec, ts->ts[2].tv_sec);
 				dest->time = ts->ts[2];
 				found = 1;
 			//}
@@ -113,12 +116,14 @@ int extract_timestamp(struct msghdr *hdr, struct timestamp_info *dest)
 			/*
 			 * Make sure we got the timestamp for the right request
 			 */
-			if (se->ee_errno == ENOMSG &&
-				se->ee_origin == SO_EE_ORIGIN_TIMESTAMPING)
+			if (se->ee_errno == ENOMSG && se->ee_origin == SO_EE_ORIGIN_TIMESTAMPING){
 				dest->optid = se->ee_data;
-			else
+				printf("optid:%u\n", se->ee_data);
+			}
+			else{
 				printf("Received IP_RECVERR: errno = %d %s\n",
 							   se->ee_errno, strerror(se->ee_errno));
+			}
 		} else
 			assert(0);
 	}
@@ -128,8 +133,8 @@ int extract_timestamp(struct msghdr *hdr, struct timestamp_info *dest)
 int enable_nic_timestamping(char *if_name)
 {
 	int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	//int filter = HWTSTAMP_FILTER_ALL;
-	int filter = HWTSTAMP_FILTER_PTP_V1_L4_EVENT;
+	int filter = HWTSTAMP_FILTER_ALL;
+	//int filter = HWTSTAMP_FILTER_PTP_V1_L4_EVENT;
 	int tx_type = HWTSTAMP_TX_ON;
 	int ret;
 
@@ -151,11 +156,13 @@ int sock_enable_timestamping(int fd)
 {
 	int ts_mode = 0;
 
+	ts_mode |= SOF_TIMESTAMPING_OPT_TSONLY | SOF_TIMESTAMPING_OPT_ID;
+
 	ts_mode |= SOF_TIMESTAMPING_RX_HARDWARE | SOF_TIMESTAMPING_RAW_HARDWARE |
 			   SOF_TIMESTAMPING_TX_HARDWARE;
-	ts_mode |= SOF_TIMESTAMPING_OPT_TSONLY | SOF_TIMESTAMPING_OPT_ID;
-	//ts_mode |= SOF_TIMESTAMPING_RX_SOFTWARE | SOF_TIMESTAMPING_TX_SOFTWARE |
-	//SOF_TIMESTAMPING_SOFTWARE;
+
+	ts_mode |= SOF_TIMESTAMPING_RX_SOFTWARE | SOF_TIMESTAMPING_TX_SOFTWARE |
+		SOF_TIMESTAMPING_SOFTWARE;
 
 	if (setsockopt(fd, SOL_SOCKET, SO_TIMESTAMPING, &ts_mode, sizeof(ts_mode)) <
 		0) {
@@ -166,54 +173,28 @@ int sock_enable_timestamping(int fd)
 	return 0;
 }
 
-/*ssize_t timestamp_recv(int sockfd, void *buf, size_t len, int flags,
-					   struct timestamp_info* last_rx_time)
-{
-	char recv_control[CONTROL_LEN] = {0};
-	int nbytes, ret;
-	struct msghdr hdr = {0};
-	struct iovec recv_iov = {buf, len};
-
-	hdr.msg_iov = &recv_iov;
-	hdr.msg_iovlen = 1;
-	hdr.msg_control = recv_control;
-	hdr.msg_controllen = CONTROL_LEN;
-
-	nbytes = recvmsg(sockfd, &hdr, flags);
-
-	if (nbytes <= 0)
-		return nbytes;
-
-	bzero(last_rx_time, sizeof(struct timespec));
-	ret = extract_timestamp(&hdr, last_rx_time);
-	assert(ret == 1);
-
-	return nbytes;
-}*/
-
 /*
  * Used only for NIC timestamping with UDP
  * Returns -1 if no new timestamp found
  * 1 if timestamp found
  */
-int udp_get_tx_timestamp(int sockfd, struct timespec *tx_timestamp)
+int udp_get_tx_timestamp(int sockfd, struct timestamp_info *tx_timeinfo)
 {
 	char tx_control[CONTROL_LEN] = {0};
 	struct msghdr mhdr = {0};
 	struct iovec junk_iov = {NULL, 0};
-	int n;
 
 	mhdr.msg_iov = &junk_iov;
 	mhdr.msg_iovlen = 1;
 	mhdr.msg_control = tx_control;
 	mhdr.msg_controllen = CONTROL_LEN;
 
-	n = recvmsg(sockfd, &mhdr, MSG_ERRQUEUE);
-	if (n < 0) {
+	ssize_t bytes = recvmsg(sockfd, &mhdr, MSG_ERRQUEUE);
+	if (bytes < 0) {
 		return -1;
 	}
 
-	assert(n == 0);
+	assert(bytes == 0);
 
-	return udp_extract_timestamps(&mhdr, tx_timestamp);
+	return udp_extract_timestamps(&mhdr, tx_timeinfo);
 }

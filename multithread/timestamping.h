@@ -55,7 +55,8 @@ struct timestamp_info {
 int enable_nic_timestamping(char *if_name);
 int disable_nic_timestamping(char *if_name);
 int sock_enable_timestamping(int fd);
-int extract_timestamp(struct msghdr *hdr, struct timestamp_info *dest);
-int udp_get_tx_timestamp(int sockfd, struct timespec *tx_timestamp);
+//int extract_timestamp(struct msghdr *hdr, struct timestamp_info *dest);
+int udp_get_rx_timestamp(struct msghdr *hdr, struct timestamp_info *rx_timeinfo);
+int udp_get_tx_timestamp(int sockfd, struct timestamp_info *tx_timeinfo);
 
 #endif //TIMESTAMP_H
