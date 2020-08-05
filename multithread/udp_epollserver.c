@@ -16,20 +16,23 @@
 #include "nanosleep.h"
 #include "epoll_state.h"
 
+#include "multi_dest_header.h"
+#include "multi_dest_protocol.h"
+
 static const int MAXPENDING = 20; // Maximum outstanding connection requests
 static const int SERVER_BUFSIZE = 1024*16;
 int closed_loop_done;
 int queued_events;
 uint64_t pkt_counter;
 
-typedef struct __attribute__((__packed__)) {
-  uint16_t service_id;    // Type of Service.
-  uint16_t request_id;    // Request identifier.
-  uint16_t packet_id;     // Packet identifier.
-  uint16_t options;       // Options (could be request length etc.).
-  in_addr_t alt_dst_ip;
-  in_addr_t alt_dst_ip2;
-} alt_header;
+// typedef struct __attribute__((__packed__)) {
+//   uint16_t service_id;    // Type of Service.
+//   uint16_t request_id;    // Request identifier.
+//   uint16_t packet_id;     // Packet identifier.
+//   uint16_t options;       // Options (could be request length etc.).
+//   in_addr_t alt_dst_ip;
+//   in_addr_t alt_dst_ip2;
+// } alt_header;
 
 typedef struct {
     //per thread state
@@ -300,7 +303,7 @@ int main(int argc, char *argv[]) {
 
     snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[3]) +  sizeof(argv[5]) + sizeof(identify_string) +
         sizeof(log) + 15, "%s%s_%s_%sthd%s", filename_prefix, identify_string, argv[5], argv[3], log);
-    FILE* output_fptr = fopen(logfilename, "w+");
+    //FILE* output_fptr = fopen(logfilename, "w+");
 
     while(1){
     //while(!closed_loop_done){
@@ -457,7 +460,7 @@ int main(int argc, char *argv[]) {
             //fflush(output_fptr);
         }
     }
-    fflush(output_fptr);
+    //fflush(output_fptr);
     //pthread_join(*feedback_thread, NULL);
 
 	printf("closing sockets then\n");

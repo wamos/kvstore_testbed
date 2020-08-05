@@ -43,7 +43,10 @@ target_link_libraries(udp_client PRIVATE cpp_dist )
 target_link_libraries(udp_client PRIVATE m)
 
 add_executable(timestamp_test timestamp_test.c timestamping.c)
-#set_target_properties(udp_client PROPERTIES C_STANDARD 99)
+add_executable(udp_timestamped_server udp_timestamped_server.c timestamping.c)
+set_target_properties(udp_timestamped_server PROPERTIES C_STANDARD 11)
+
+add_executable(multidest_test multidest_test.c) 
 
 add_executable(dist_test dist_test.c)
 target_link_libraries(dist_test PRIVATE cpp_dist )

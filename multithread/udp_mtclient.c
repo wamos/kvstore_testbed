@@ -20,20 +20,23 @@
 #include "epoll_state.h"
 #include "dist_gen.h"
 
+#include "multi_dest_header.h"
+#include "multi_dest_protocol.h"
+
 #define OPEN_LOOP_ENABLE 1
 #define MAX_NUM_REQ 100*1000
 #define MAX_NUM_SAMPLE 100*1000 //100*1000
 
 //#define MAX_PENDING_REQ 20
 
-typedef struct __attribute__((__packed__)) {
-  uint16_t service_id;    // Type of Service.
-  uint16_t request_id;    // Request identifier.
-  uint16_t packet_id;     // Packet identifier.
-  uint16_t options;       // Options (could be request length etc.).
-  in_addr_t alt_dst_ip;
-  in_addr_t alt_dst_ip2;
-} alt_header;
+// typedef struct __attribute__((__packed__)) {
+//   uint16_t service_id;    // Type of Service.
+//   uint16_t request_id;    // Request identifier.
+//   uint16_t packet_id;     // Packet identifier.
+//   uint16_t options;       // Options (could be request length etc.).
+//   in_addr_t alt_dst_ip;
+//   in_addr_t alt_dst_ip2;
+// } alt_header;
 
 typedef struct {
     uint32_t tid;
@@ -499,7 +502,7 @@ int main(int argc, char *argv[]) {
             recv_port_start++;
 
             openloop_thread_state[thread_id].conn_list[conn_index].server_addr = servAddr;
-            openloop_thread_state[thread_id].conn_list[conn_index].tid = thread_id*2;
+            openloop_thread_state[thread_id].conn_list[conn_index].tid = thread_id*2; 
             memset(&openloop_thread_state[thread_id].conn_list[conn_index].send_header, 0, sizeof(alt_header));
             openloop_thread_state[thread_id].conn_list[conn_index].send_header.service_id = 1;
             openloop_thread_state[thread_id].conn_list[conn_index].send_header.request_id = 0;
@@ -530,7 +533,8 @@ int main(int argc, char *argv[]) {
     printf("setting up closed-loop connection\n");
     //setting up 1 connection for each thread sequentially
     for (uint32_t thread_id = 0; thread_id < num_threads_closedloop; thread_id++){
-        closedloop_thread_state[thread_id].tid = (num_threads_openloop + thread_id)*2;
+        closedloop_thread_state[thread_id].tid = (num_threads_openloop + thread_id)*2; 
+        //scale to two NUMA nodes //(num_threads_openloop + thread_id)*2;
         closedloop_thread_state[thread_id].fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         printf("thread id %" PRIu32 ", conn_fd:%d\n", closedloop_thread_state[thread_id].tid, closedloop_thread_state[thread_id].fd);
 
