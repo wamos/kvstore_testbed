@@ -17,26 +17,31 @@ int init_multi_dest_buf(multi_dest_buffer* buf, uint32_t size){
     buf->ack_head = 0;
     buf->ack_tail = 0;
     buf->isfull = 0;
-    buf->out_of_order_recv = 0; 
-    buf->send_header = (alt_header*)malloc( size * sizeof(alt_header) );
-    buf->out_of_order_map     = (uint8_t*)malloc( size * sizeof(uint8_t) ); 
-    memset(buf->out_of_order_map, 0, size * sizeof(uint8_t));
-    memset(buf->send_header, 0, size * sizeof(alt_header));
+    buf->out_of_order_recv = 0;     
+    buf->send_timer  = (rto_timer_event*)malloc( size * sizeof(rto_timer_event) );
+    buf->out_of_order_map  = (uint8_t*)malloc( size * sizeof(int8_t) ); 
+    // un-used: -1, sent: 0 
+    // for recv-ed buf, val > 0, recv in-order: 1, recv out-of-order: 2
+    memset(buf->out_of_order_map, -1, size * sizeof(int8_t));    
+    memset(buf->send_timer, 0, size * sizeof(rto_timer_event));
+    //buf->send_header = (alt_header*)malloc( size * sizeof(alt_header) );
+    //memset(buf->send_header, 0, size * sizeof(alt_header));
 
-    if(buf->send_header == NULL)
+    if(buf->send_timer == NULL)
         return -1;
 
     return 0;
 }
 
-alt_header* acquire_multi_dest_buf(multi_dest_buffer* buf){
+rto_timer_event* acquire_multi_dest_header(multi_dest_buffer* buf){
     if(buf->isfull == 0){
-        alt_header* header = &buf->send_header[buf->ack_head];
+        rto_timer_event* ret_timer  = &buf->send_timer[buf->ack_head];
+        buf->out_of_order_map[buf->ack_head] = 0;
         buf->ack_head = (buf->ack_head+1)%buf->buf_size;
         if(buf->ack_head == buf->ack_tail){
           buf->isfull = 1;  
         }
-        return header;
+        return ret_timer;
     }
     else{
         printf("buf is full:%" PRIu8 "\n", buf->isfull);
@@ -51,16 +56,23 @@ int reclaim_multi_dest_buf(multi_dest_buffer* buf, alt_header* recv_header){
     }
     else{
         buf->isfull = 0;
-        if(recv_header->request_id == buf->send_header[buf->ack_tail].request_id){
-            if(!buf->out_of_order_recv)
+        printf("buf->ack_tail:%" PRIu32 "\n", buf->ack_tail);
+        uint32_t sent_request_id = buf->send_timer[buf->ack_tail].send_header.request_id;
+        printf("sent_request_id:%" PRIu32 "\n", sent_request_id);
+        if(recv_header->request_id == sent_request_id){            
+            if(!buf->out_of_order_recv){
+                printf("perfect reclaiming\n");
+                buf->out_of_order_map[buf->ack_tail] = 1;
                 buf->ack_tail = (buf->ack_tail + 1)%buf->buf_size;
+            }
             else{ //there are out_of_order_recv reqs
+                printf("reclaiming with out_of_order_recv\n");
                 buf->ack_tail = (buf->ack_tail + 1)%buf->buf_size;
                 // catch up til the point that the next not-yet-received req, e.g. 
                 // req 1, 2, 3, 4, 5
                 // last recv req 2 and req 4, recv req 1 now
                 // buf->ack_tail will catch up to req 2 
-                while(buf->out_of_order_map[buf->ack_tail] > 0){               
+                while(buf->out_of_order_map[buf->ack_tail] > 1){               
                     buf->ack_tail = (buf->ack_tail + 1)%buf->buf_size;
                     buf->out_of_order_recv--;
                 }
@@ -71,12 +83,12 @@ int reclaim_multi_dest_buf(multi_dest_buffer* buf, alt_header* recv_header){
             // TODO: duplicated response? 
             // DONE: later req arrives eariler
             // recv_header->request_id > buf->send_header[ack_tail].request_id
-            uint32_t index_diff = recv_header->request_id - buf->send_header[buf->ack_tail].request_id;
+            uint32_t index_diff = recv_header->request_id - sent_request_id;
             printf("out of order recv\n");
-            printf("recv_header->request_id:%" PRIu32 ", buf->send_header[buf->ack_tail].request_id %" PRIu32"\n", recv_header->request_id, buf->send_header[buf->ack_tail].request_id);
+            printf("recv_header->request_id:%" PRIu32 ", sent_request_id:%" PRIu32"\n", recv_header->request_id, sent_request_id);
             if(index_diff > 0){
                 uint32_t index = (buf->ack_tail+index_diff)%buf->buf_size;
-                buf->out_of_order_map[index] = 1;
+                buf->out_of_order_map[index] = 2;
                 buf->out_of_order_recv++;
             }
             return 1;
@@ -85,20 +97,21 @@ int reclaim_multi_dest_buf(multi_dest_buffer* buf, alt_header* recv_header){
 }
 
 void free_multi_dest_buf(multi_dest_buffer* buf){
-    if(buf->send_header != NULL)
-        free(buf->send_header);
+    if(buf->send_timer != NULL)
+        free(buf->send_timer);
     
     if(buf->out_of_order_map != NULL)
         free(buf->out_of_order_map);
 }
 
-int init_timer_wheel(simple_timer_wheel* tm_wheel, int wheel_size){
+int init_timer_wheel(simple_timer_wheel* tm_wheel, uint32_t wheel_size){
     tm_wheel->wheel = (timer_wheel_slot*)malloc( wheel_size * sizeof(timer_wheel_slot) );
 
     if(tm_wheel->wheel == NULL)
         return -1;
 
-    tm_wheel->current_index = 0;
+    tm_wheel->current_tick = 0;
+    tm_wheel->processed_index = 0;
     clock_gettime(CLOCK_REALTIME, &tm_wheel->last_access_time);
     tm_wheel->wheel_tick_size = wheel_size;
     for(uint32_t tick = 0; tick < wheel_size; tick++){
@@ -109,102 +122,71 @@ int init_timer_wheel(simple_timer_wheel* tm_wheel, int wheel_size){
     return 0;
 }
 
-// process events from timer wheel and return expired ones to timer_event_pool
-// [NEED TO OPTIMIZE]: take 1 us in average and up to 3 us to process 1 timer event!
+void processing_closedloop_timer_wheel(simple_timer_wheel* tm_wheel){
+    // use monotonically incresing ticks instead of wrap-around index 
+    // e.g. received_index = 485, schedule_index/current_index = 20
+    // use index can cause this to be time-out
+    // however, schedule_index/current_index 20 here should have tick = 520
+    // schedule_tick/current_tick 520 > received index/tick 485
+    // so there shouldn't be a timeout if we use ticks    
+    rto_timer_event* event = tm_wheel->wheel[tm_wheel->processed_index].event_head;
 
-// TODO: rewrite the whole function
-// 1. trevarse the wheel outside this function
-// 2. this function handles per slot timer-event processing
-// 3. don't include re-transmision here?
-void process_event_timer_wheel(simple_timer_wheel* tm_wheel, timer_event_pool* pool, uint64_t rto_interval){
-    //to know how many slots we need to keep up in the following while loop
-    struct timespec now;
-    clock_gettime(CLOCK_REALTIME, &now);
-    int64_t advance_index = (int64_t) clock_gettime_diff_us(&tm_wheel->last_access_time, &now);
-    //uint64_t ts1_nsec = (uint64_t) tm_wheel->last_access_time.tv_nsec + 1000000000 * (uint64_t) tm_wheel->last_access_time.tv_sec;
-    //printf("last_access_time:%" PRIu64 "\n", ts1_nsec);
-    printf("Now_index:%" PRIu64 "\n", tm_wheel->current_index + (uint64_t) advance_index);
-    //printf("advance_index1:%" PRId64 "\n", advance_index);
-
-    while(advance_index > 0){ //walk the wheel ticks until now, advance_index= now - last_access_time in us
-        timer_wheel_slot current_slot = tm_wheel->wheel[tm_wheel->current_index];
-        //printf("current_index:%" PRIu32 "\n", tm_wheel->current_index);
-        //printf("current_slot.event_head %p", current_slot.event_head);
-        if(current_slot.event_head != NULL){ // there is at least one event in this slot
-            printf("\ncurrent_slot.event_head %p\n", current_slot.event_head);
-            rto_timer_event* event = current_slot.event_head;
-            int once = 1;
-            while(event->next_event !=  NULL || once ){ //walk the linked-list of timers
-                if(!once)
-                    event = event->next_event;
-                // TODO: does this "req_duration" even make sense?
-                uint64_t req_duration = clock_gettime_diff_us(&now, &event->send_time);
-                printf("req_duration:%" PRIu64 "\n", req_duration);
-                if(rto_interval < req_duration){
-                    printf("retransmit!\n");
-                    //let's retransmit!
-                    struct sockaddr_in serv_addr;
-                    serv_addr.sin_addr.s_addr = event->send_header->alt_dst_ip; 
-                    serv_addr.sin_port = event->send_header->dst_port;
-                    int serv_addr_len = sizeof(serv_addr);
-                    //numBytes = sendto(event->fd, (void*) event->send_header, sizeof(alt_header), 0, (struct sockaddr *) &serv_addr, (socklen_t) serv_addr_len);            
-                    ssize_t send_bytes = 0;
-                    printf("event finished after rto_interval\n");
-                    // while(send_bytes < sizeof(alt_header)){
-                    //         ssize_t numBytes = sendto(event->fd, (void*) event->send_header, sizeof(alt_header), 0, (struct sockaddr *) &serv_addr, (socklen_t) serv_addr_len);
-                    //     if (numBytes < 0){
-                    //         printf("send() failed\n");
-                    //         exit(1);
-                    //     }
-                    //     else{
-                    //         send_bytes = send_bytes + numBytes;
-                    //         //printf("send:%zd\n", numBytes);
-                    //     }
-                    // }
-                    //TODO: setup RTO again, now RTO is pre-set and fixed
-                    //event->rto_interval = event->rto_interval;
-                    //an update 99-percentile RTT can be used for a dynamic RTO value?             
-                    //schedule_event_timer_wheel(tm_wheel, event, rto_interval);
-                }
-                else{
-                    printf("event finished within rto_interval\n");
-                    // return the timer back to its pool
-                    if( reclaim_timer_to_pool(pool, event) < 0){
-                        printf("timer recliamation errors\n");
-                    }
-                    // TODO: update per thread completed_req?
-                }                            
-                once = 0;
-            }
-        }
-        else{
-           printf("-"); 
-        }
-        advance_index--;
-        tm_wheel->current_index = (tm_wheel->current_index + 1) % tm_wheel->wheel_tick_size;
+    if(event->received_tick <= tm_wheel->wheel[tm_wheel->processed_index].tick){
+        printf("recv tick:%" PRIu64 ",", event->received_tick);
+        printf("schd tick:%" PRIu64 ",", tm_wheel->wheel[tm_wheel->processed_index].tick);
+        printf("event finished within rto_interval\n");
+        printf("recv request_id:%" PRIu32 "\n", event->recv_header.request_id);
+        // clear the timer slot before return        
     }
-    printf("\nadvance_index2:%" PRIu64 "\n", advance_index);
+    //else case: timeout requests
+        // we don't do anything here          
+    tm_wheel->wheel[tm_wheel->processed_index].event_head = NULL;
+}
+
+void processing_openloop_timer_wheel(simple_timer_wheel* tm_wheel, multi_dest_buffer* buf){
+    // use monotonically incresing ticks instead of wrap-around index 
+    // e.g. received_index = 485, schedule_index/current_index = 20
+    // use index can cause this to be time-out
+    // however, schedule_index/current_index 20 here should have tick = 520
+    // schedule_tick/current_tick 520 > received index/tick 485
+    // so there shouldn't be a timeout if we use ticks    
+    rto_timer_event* event = tm_wheel->wheel[tm_wheel->processed_index].event_head;
+
+    // 1. proceess event_head
+    printf("recv tick:%" PRIu64 ",", event->received_tick);
+    printf("schd tick:%" PRIu64 ",", tm_wheel->wheel[tm_wheel->processed_index].tick);
+    if(event->received_tick <= tm_wheel->wheel[tm_wheel->processed_index].tick){
+        printf("event finished within rto_interval\n");
+        printf("recv request_id:%" PRIu32 "\n", event->recv_header.request_id);
+        reclaim_multi_dest_buf(buf, &event->recv_header);
+    }
+    //else case: timeout requests
+        // we don't do anything here, 
+        // their value in buf->out_of_order_map will be 0 representing sent
+        // but not received yet
+    
+    // clear the timer slot before return  
+    tm_wheel->wheel[tm_wheel->processed_index].event_head = NULL;
 }
 
 // TODO: rewrite the whole function
 // 1. take the scheduled_index calculation out of the function
 // 2. we only want to contain pointer update operation in this fucntion
-void schedule_event_timer_wheel(simple_timer_wheel* tm_wheel, rto_timer_event* event, uint64_t rto_interval){
-    uint32_t scheduled_index = 0; 
-
-    if(rto_interval >= tm_wheel->wheel_tick_size){ // schedule for the max possible interval
-        scheduled_index = (tm_wheel->current_index + tm_wheel->wheel_tick_size - 1) % tm_wheel->wheel_tick_size;
-    }
-    else{ // rto_interval < wheel_tick_size
-        scheduled_index = (tm_wheel->current_index + rto_interval) % tm_wheel->wheel_tick_size;
-    }
-    printf("scheduled_index:%" PRIu32 "\n", scheduled_index);
+void schedule_event_timer_wheel(simple_timer_wheel* tm_wheel, rto_timer_event* event, uint32_t scheduled_index){
+    //uint32_t scheduled_index = 0; 
+    // if(rto_interval >= tm_wheel->wheel_tick_size){ // schedule for the max possible interval
+    //     scheduled_index = (tm_wheel->current_index + tm_wheel->wheel_tick_size - 1) % tm_wheel->wheel_tick_size;
+    // }
+    // else{ // rto_interval < wheel_tick_size
+    //     scheduled_index = (tm_wheel->current_index + rto_interval) % tm_wheel->wheel_tick_size;
+    // }
+    // printf("scheduled_index:%" PRIu32 "\n", scheduled_index);
 
     if(tm_wheel->wheel[scheduled_index].event_head == NULL){
-        printf("event_head == NULL\n");
+        //printf("event_head == NULL\n");
         tm_wheel->wheel[scheduled_index].event_head = event;
-        printf("event_head__: %p\n", tm_wheel->wheel[scheduled_index].event_head);
-        printf("event_insert: %p\n", event);
+        //printf("event_head__: %p\n", tm_wheel->wheel[scheduled_index].event_head);
+        //printf("event_insert: %p\n", event);
     }
     else{
         // pre: slot.event_head->previous_head
@@ -218,6 +200,93 @@ void schedule_event_timer_wheel(simple_timer_wheel* tm_wheel, rto_timer_event* e
     // printf("rto_timer_event:%p\n", event);
     // printf("tm_wheel->wheel[scheduled_index].event_head:%p\n", tm_wheel->wheel[scheduled_index].event_head);
 }
+
+
+// void process_preslot_timer_wheel(simple_timer_wheel* tm_wheel, multi_dest_buffer* buf){
+//     // we've pre-checked that proceess event_head current_slot.event_head != NULL
+//     // timer_wheel_slot current_slot = tm_wheel->wheel[tm_wheel->processed_index];    
+//     // printf("current_slot.event_head %p\n", current_slot.event_head);
+//     // rto_timer_event* event = current_slot.event_head;
+//     rto_timer_event* event = tm_wheel->wheel[tm_wheel->processed_index].event_head;
+
+//     // use monotonically incresing ticks instead of wrap-around index 
+//     // e.g. received_index = 485, schedule_index/current_index = 20
+//     // use index can cause this to be time-out
+//     // however, schedule_index/current_index 20 here should have tick = 520
+//     // schedule_tick/current_tick 520 > received index/tick 485
+//     // so there shouldn't be a timeout if we use ticks
+
+//     // TODO: make 1. and 2. a for-loop
+//     // 1. proceess event_head
+//     printf("recv tick:%" PRIu64 ",", event->received_tick);
+//     printf("schd tick:%" PRIu64 ",", tm_wheel->wheel[tm_wheel->processed_index].tick);
+//     if(event->received_tick > tm_wheel->wheel[tm_wheel->processed_index].tick){
+//     //if(event->received_index == tm_wheel->wheel_tick_size){//> tm_wheel->current_index){
+//         //printf("retransmit!\n");
+//         printf("event finished after rto_interval\n");
+//         reclaim_multi_dest_buf(buf, &event->recv_header);   
+//         // let's retransmit!, set up server addr
+//         struct sockaddr_in serv_addr;
+//         serv_addr.sin_addr.s_addr = event->send_header.alt_dst_ip; 
+//         serv_addr.sin_port = event->send_header.dst_port;
+//         int serv_addr_len = sizeof(serv_addr);                
+//         // TODO: send-loop here
+//         ssize_t send_bytes = 0;
+//         while(send_bytes < sizeof(alt_header)){
+//             ssize_t numBytes = sendto(event->fd, (void*) &event->send_header, sizeof(alt_header), 0, (struct sockaddr *) &server_addr, (socklen_t) serv_addr_len);
+
+//             if (numBytes < 0){
+//                 printf("send() failed\n");
+//                 exit(1);
+//             }
+//             else{
+//                 send_bytes = send_bytes + numBytes;
+//                 printf("re-send:%zd, reqid:%" PRIu32 "\n", numBytes, event->send_header.request_id);
+//             }
+//         }  
+//         // TODO: schedule retransmission!  
+//         uint32_t scheduled_index = (tm_wheel->current_tick + tm_wheel->rto_interval)%tm_wheel->wheel_tick_size;
+//         schedule_event_timer_wheel(tm_wheel, event, scheduled_index);
+//     }
+//     else{
+//         printf("event finished within rto_interval\n");
+//         printf("recv request_id:%" PRIu32 "\n", event->recv_header.request_id);
+//         reclaim_multi_dest_buf(buf, &event->recv_header);
+//         //tm_wheel->wheel[tm_wheel->processed_index].event_head = NULL;
+//         // TODO: update per thread completed_req?
+//     } 
+    
+//     // 2. proceess event_head->next_event
+//     // while(event->next_event !=  NULL){ //walk the linked-list of timers
+//     //     event = event->next_event; // actually walk to the next event
+
+//     //     //received_index == tm_wheel->wheel_tick_size, it means not received yet
+//     //     //if(event->received_index > tm_wheel->current_index){
+//     //     if(event->received_index == tm_wheel->wheel_tick_size){//> tm_wheel->current_index){
+//     //         printf("retransmit!\n");
+//     //         //let's retransmit!
+//     //         struct sockaddr_in serv_addr;
+//     //         serv_addr.sin_addr.s_addr = event->send_header.alt_dst_ip; 
+//     //         serv_addr.sin_port = event->send_header.dst_port;
+//     //         int serv_addr_len = sizeof(serv_addr);
+//     //         //numBytes = sendto(event->fd, (void*) event->send_header, sizeof(alt_header), 0, (struct sockaddr *) &serv_addr, (socklen_t) serv_addr_len);            
+//     //         ssize_t send_bytes = 0;
+//     //         printf("event finished after rto_interval\n");     
+//     //         uint32_t scheduled_index = (tm_wheel->current_index + tm_wheel->rto_interval)%tm_wheel->wheel_tick_size;  
+//     //         schedule_event_timer_wheel(tm_wheel, event, scheduled_index);
+//     //     }
+//     //     else{
+//     //         printf("event finished within rto_interval\n");
+//     //         printf("recv request_id:%" PRIu32 "\n", event->recv_header.request_id);
+//     //         reclaim_multi_dest_buf(buf, &event->recv_header);
+//     //         // TODO: update per thread completed_req?
+//     //     }                            
+//     // }
+
+//     // clear the timer slot before return  
+//     tm_wheel->wheel[tm_wheel->processed_index].event_head = NULL;
+// }
+
 
 // int init_timer_pool(timer_event_pool* pool, uint32_t pool_size){
 //     pool->isfullyused = 0;
@@ -293,4 +362,83 @@ void schedule_event_timer_wheel(simple_timer_wheel* tm_wheel, rto_timer_event* e
 //     event->next_event = next_event;
 
 //     return 0;
+// }
+
+// process events from timer wheel and return expired ones to timer_event_pool
+// [NEED TO OPTIMIZE]: take 1 us in average and up to 3 us to process 1 timer event!
+
+// TODO: rewrite the whole function
+// 1. trevarse the wheel outside this function
+// 2. this function handles per slot timer-event processing
+// 3. don't include re-transmision here?
+// void process_event_timer_wheel(simple_timer_wheel* tm_wheel, timer_event_pool* pool, uint64_t rto_interval){
+//     //to know how many slots we need to keep up in the following while loop
+//     struct timespec now;
+//     clock_gettime(CLOCK_REALTIME, &now);
+//     int64_t advance_index = (int64_t) clock_gettime_diff_us(&tm_wheel->last_access_time, &now);
+//     //uint64_t ts1_nsec = (uint64_t) tm_wheel->last_access_time.tv_nsec + 1000000000 * (uint64_t) tm_wheel->last_access_time.tv_sec;
+//     //printf("last_access_time:%" PRIu64 "\n", ts1_nsec);
+//     printf("Now_index:%" PRIu64 "\n", tm_wheel->current_index + (uint64_t) advance_index);
+//     //printf("advance_index1:%" PRId64 "\n", advance_index);
+
+//     while(advance_index > 0){ //walk the wheel ticks until now, advance_index= now - last_access_time in us
+//         timer_wheel_slot current_slot = tm_wheel->wheel[tm_wheel->current_index];
+//         //printf("current_index:%" PRIu32 "\n", tm_wheel->current_index);
+//         //printf("current_slot.event_head %p", current_slot.event_head);
+//         if(current_slot.event_head != NULL){ // there is at least one event in this slot
+//             printf("\ncurrent_slot.event_head %p\n", current_slot.event_head);
+//             rto_timer_event* event = current_slot.event_head;
+//             int once = 1;
+//             while(event->next_event !=  NULL || once ){ //walk the linked-list of timers
+//                 if(!once)
+//                     event = event->next_event;
+//                 // TODO: does this "req_duration" even make sense?
+//                 //uint64_t req_duration = clock_gettime_diff_us(&now, &event->send_time);
+//                 //printf("req_duration:%" PRIu64 "\n", req_duration);
+//                 //if(rto_interval < req_duration){
+//                 if(event->received_index > tm_wheel->current_index){
+//                     printf("retransmit!\n");
+//                     //let's retransmit!
+//                     struct sockaddr_in serv_addr;
+//                     serv_addr.sin_addr.s_addr = event->send_header->alt_dst_ip; 
+//                     serv_addr.sin_port = event->send_header->dst_port;
+//                     int serv_addr_len = sizeof(serv_addr);
+//                     //numBytes = sendto(event->fd, (void*) event->send_header, sizeof(alt_header), 0, (struct sockaddr *) &serv_addr, (socklen_t) serv_addr_len);            
+//                     ssize_t send_bytes = 0;
+//                     printf("event finished after rto_interval\n");
+//                     // while(send_bytes < sizeof(alt_header)){
+//                     //         ssize_t numBytes = sendto(event->fd, (void*) event->send_header, sizeof(alt_header), 0, (struct sockaddr *) &serv_addr, (socklen_t) serv_addr_len);
+//                     //     if (numBytes < 0){
+//                     //         printf("send() failed\n");
+//                     //         exit(1);
+//                     //     }
+//                     //     else{
+//                     //         send_bytes = send_bytes + numBytes;
+//                     //         //printf("send:%zd\n", numBytes);
+//                     //     }
+//                     // }
+//                     //TODO: setup RTO again, now RTO is pre-set and fixed
+//                     //event->rto_interval = event->rto_interval;
+//                     //an update 99-percentile RTT can be used for a dynamic RTO value?             
+
+//                     //schedule_event_timer_wheel(tm_wheel, event, scheduled_index);
+//                 }
+//                 else{
+//                     printf("event finished within rto_interval\n");
+//                     // return the timer back to its pool
+//                     if( reclaim_timer_to_pool(pool, event) < 0){
+//                         printf("timer recliamation errors\n");
+//                     }
+//                     // TODO: update per thread completed_req?
+//                 }                            
+//                 once = 0;
+//             }
+//         }
+//         else{
+//            printf("-"); 
+//         }
+//         advance_index--;
+//         tm_wheel->current_index = (tm_wheel->current_index + 1) % tm_wheel->wheel_tick_size;
+//     }
+//     printf("\nadvance_index2:%" PRIu64 "\n", advance_index);
 // }
