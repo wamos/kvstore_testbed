@@ -34,23 +34,12 @@ int main(int argc, char *argv[]) {
     server_addr.sin_addr.s_addr =inet_addr(recv_ip_addr);
     int fd = 4;
 
-    if( multi_dest_buf_init(&send_buf, 10) < 0){
+    if( init_multi_dest_buf(&send_buf, 10) < 0){
         printf("buf_init fail\n");
         exit(1);
     }
 
-    // one re-ordering between 3 and 4 
-    recv_header[0].request_id = 0;
-    recv_header[1].request_id = 1;
-    recv_header[2].request_id = 2;
-    recv_header[3].request_id = 4;
-    recv_header[4].request_id = 3;
-    recv_header[5].request_id = 5;
-    recv_header[6].request_id = 6;
-    recv_header[7].request_id = 7;
-    recv_header[8].request_id = 8;
-    recv_header[9].request_id = 9;
-
+    // re-ordering 2, 3, 4, 5 -> 5, 2, 3 ,4
     // recv_header[0].request_id = 0;
     // recv_header[1].request_id = 1;
     // recv_header[2].request_id = 5;
@@ -62,34 +51,65 @@ int main(int argc, char *argv[]) {
     // recv_header[8].request_id = 8;
     // recv_header[9].request_id = 9;
 
-    // recv_header[0].request_id = 9;
-    // recv_header[1].request_id = 5;
-    // recv_header[2].request_id = 7;
-    // recv_header[3].request_id = 3;
-    // recv_header[4].request_id = 8;
-    // recv_header[5].request_id = 0;
-    // recv_header[6].request_id = 4;
-    // recv_header[7].request_id = 2;
-    // recv_header[8].request_id = 1;
-    // recv_header[9].request_id = 6;
+    // id beyond [0,9]
+    recv_header[0].request_id = 10;
+    recv_header[1].request_id = 11;
+    recv_header[2].request_id = 12;
+    recv_header[3].request_id = 14;
+    recv_header[4].request_id = 13;
+    recv_header[5].request_id = 15;
+    recv_header[6].request_id = 16;
+    recv_header[7].request_id = 17;
+    recv_header[8].request_id = 18;
+    recv_header[9].request_id = 19;
 
-    //send emulation
-    for(int i = 0; i < 10; i++){
-        alt_header* header = multi_dest_buf_acquire(&send_buf);
-        header->service_id = 1;
-        header->request_id = i;
-        header->packet_id  = 1;
-        header->options    = 1;
-        header->alt_dst_ip = inet_addr(recv_ip_addr);
-        header->alt_dst_ip2 = inet_addr(recv_ip_addr2);
-        ssize_t sent_byte = sendto_sim(fd, (void*) header, sizeof(header), 0, server_addr);
-        ssize_t recv_byte = recvfrom_sim(fd, (void*) &recv_header[i], sizeof(alt_header), 0, server_addr);        
-        //we inspect the status of multi_dest_buf now
-        printf("before reclaim, :PPPPPP req id:%d\n", i);
-        printf("tail:%" PRIu32 ",head:%" PRIu32 "\n", send_buf.ack_tail, send_buf.ack_head);
-        int ret_val = multi_dest_buf_reclaim(&send_buf, &recv_header[i]);
-        printf("after  reclaim, I break req id:%d\n", i);
-        printf("tail:%" PRIu32 ",head:%" PRIu32 "\n", send_buf.ack_tail, send_buf.ack_head);
-    }
+
+    //send/recv emulation
+    // for(int i = 0; i < 10; i++){
+    //     alt_header* header = acquire_multi_dest_buf(&send_buf);
+    //     header->service_id = 1;
+    //     header->request_id = i+10;
+    //     header->packet_id  = 1;
+    //     header->options    = 1;
+    //     header->alt_dst_ip = inet_addr(recv_ip_addr);
+    //     header->alt_dst_ip2 = inet_addr(recv_ip_addr2);
+    //     ssize_t sent_byte = sendto_sim(fd, (void*) header, sizeof(header), 0, server_addr);
+    //     ssize_t recv_byte = recvfrom_sim(fd, (void*) &recv_header[i], sizeof(alt_header), 0, server_addr);        
+    //     //we inspect the status of multi_dest_buf now
+    //     printf("before reclaim, req id:%d\n", i);
+    //     printf("tail:%" PRIu32 ",head:%" PRIu32 "\n", send_buf.ack_tail, send_buf.ack_head);
+    //     int ret_val = reclaim_multi_dest_buf(&send_buf, &recv_header[i]);
+    //     printf("after  reclaim, req id:%d\n", i);
+    //     printf("tail:%" PRIu32 ",head:%" PRIu32 "\n", send_buf.ack_tail, send_buf.ack_head);
+    // }
+
+    //test full buffer
+    // for(int i = 0; i < 10+2; i++){
+    //     alt_header* header = acquire_multi_dest_buf(&send_buf);
+    //     if(header != NULL){
+    //         header->service_id = 1;
+    //         header->request_id = i+10;
+    //         header->packet_id  = 1;
+    //         header->options    = 1;
+    //         header->alt_dst_ip = inet_addr(recv_ip_addr);
+    //         header->alt_dst_ip2 = inet_addr(recv_ip_addr2);
+    //     }
+    // }
+
+    //test empty buffer
+    // alt_header* header = acquire_multi_dest_buf(&send_buf);
+    // header->service_id = 1;
+    // header->request_id = 10;
+    // header->packet_id  = 1;
+    // header->options    = 1;
+    // header->alt_dst_ip = inet_addr(recv_ip_addr);
+    // header->alt_dst_ip2 = inet_addr(recv_ip_addr2);
+    // int ret_val = reclaim_multi_dest_buf(&send_buf, &recv_header[0]);
+    // ret_val = reclaim_multi_dest_buf(&send_buf, &recv_header[1]);
+
+
+
+    free_multi_dest_buf(&send_buf);
+
     return 0;
 }

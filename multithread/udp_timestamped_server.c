@@ -14,10 +14,8 @@
 #include <sys/socket.h> 
 #include <pthread.h>
 #include "nanosleep.h"
+#include "timestamping.h"
 #include "epoll_state.h"
-
-#include "multi_dest_header.h"
-//#include "multi_dest_protocol.h"
 
 static const int MAXPENDING = 20; // Maximum outstanding connection requests
 static const int SERVER_BUFSIZE = 1024*16;
@@ -25,14 +23,14 @@ int closed_loop_done;
 int queued_events;
 uint64_t pkt_counter;
 
-// typedef struct __attribute__((__packed__)) {
-//   uint16_t service_id;    // Type of Service.
-//   uint16_t request_id;    // Request identifier.
-//   uint16_t packet_id;     // Packet identifier.
-//   uint16_t options;       // Options (could be request length etc.).
-//   in_addr_t alt_dst_ip;
-//   in_addr_t alt_dst_ip2;
-// } alt_header;
+typedef struct __attribute__((__packed__)) {
+  uint16_t service_id;    // Type of Service.
+  uint16_t request_id;    // Request identifier.
+  uint16_t packet_id;     // Packet identifier.
+  uint16_t options;       // Options (could be request length etc.).
+  in_addr_t alt_dst_ip;
+  in_addr_t alt_dst_ip2;
+} alt_header;
 
 typedef struct {
     //per thread state
@@ -46,62 +44,6 @@ typedef struct {
     alt_header send_header;
     alt_header recv_header;     
 } feedback_thread_state; // per thread stats
-
-void* feedback_mainloop(void *arg){
-    feedback_thread_state* state = (feedback_thread_state*) arg;
-    printf("feedback mainloop\n");
-    struct timespec ts1, ts2;
-    ssize_t numBytes = 0;
-    int load_index = 0;
-    uint16_t probe_counter=0;
-
-    cpu_set_t cpuset;
-    pthread_t thread = pthread_self();
-	CPU_ZERO(&cpuset);
-	CPU_SET(state->tid, &cpuset);
-	if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) == -1){
-        printf("pthread_setaffinity_np fails\n");
-    }
-
-    int routerAddrLen = sizeof(state->server_addr);
-    clock_gettime(CLOCK_REALTIME, &ts1);
-    int sec_counter = 0;
-    while(!closed_loop_done){    
-        //printf("while loop\n");
-        //printf("fb: recv_req_count:%d\n", recv_req_count);
-
-        clock_gettime(CLOCK_REALTIME, &ts2);
-        uint64_t diff_us;
-        if(ts1.tv_sec == ts2.tv_sec){
-            diff_us = (uint64_t) (ts2.tv_nsec - ts1.tv_nsec)/1000; 
-        }
-        else{ 
-            uint64_t ts1_nsec = (uint64_t) ts1.tv_nsec + (uint64_t) 1000000000*ts1.tv_sec;
-            uint64_t ts2_nsec = (uint64_t) ts2.tv_nsec + (uint64_t) 1000000000*ts2.tv_sec;                    
-            diff_us = (ts2_nsec - ts1_nsec)/1000;
-        }
-        //printf("diff_us: %" PRIu64 "\n");
-
-        //if(queued_events > 50){ // for 09
-        if(diff_us > 25){ // for 08
-        //if(recv_req_count%10 == 0 && recv_req_count > 0){
-            //printf("diff_us: %" PRIu64 "\n");
-            //printf("probe packets\n");
-            state->send_header.service_id = 10;
-
-            state->send_header.options = (uint16_t) queued_events;  // 09
-            //state->send_header.options = (uint16_t) 50;  // 08
-            state->send_header.alt_dst_ip = inet_addr("10.0.0.18");
-            state->send_header.alt_dst_ip2 = inet_addr("10.0.0.18");
-            numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &state->server_addr, (socklen_t) routerAddrLen);
-            state->feedback_counter++;
-            clock_gettime(CLOCK_REALTIME, &ts1);
-        }        
-    }
-    printf("feedback thread joined\n");
-
-    return NULL;
-}
 
 int UDPSocketSetup(int servSock, struct sockaddr_in servAddr){
     int clntSock;
@@ -187,12 +129,17 @@ int main(int argc, char *argv[]) {
     in_port_t recv_port_start = (in_port_t) (argc > 2) ? strtoul(argv[2], NULL, 10) : 7000;
     // assume 4 pseudo-connections per open-loop thread and only 1 closed-loop pseudo-connection
     uint32_t expected_connections = (argc > 3) ? atoi(argv[3])*4+1: 1; // pseudo-connection for UDP
-    char* identify_string = (argc > 4) ? argv[4]: "test";
-    double rate = (argc > 5)? atof(argv[5]): 10000.0;
-    struct timespec ts1, ts2, sleep_ts1, sleep_ts2;
-    char* routerIP = "10.0.0.18"; //argv[1];
+    char* expname = (argc > 4) ? argv[4]: "timestamp_server";
+    //double rate = (argc > 5)? atof(argv[5]): 10000.0;
+    struct timespec ts1, ts2, sleep_ts1, sleep_ts2, ts3, ts4;
+    char* clientIP = "10.0.0.5"; //argv[1];
     closed_loop_done = 0;
     queued_events = 0;
+
+    char* interface_name = "enp59s0";
+    if(enable_nic_timestamping(interface_name) < 0){
+        printf("NIC timestamping can't be enabled\n");
+    }
 
     ssize_t numBytesRcvd;
     ssize_t numBytesSend;
@@ -200,7 +147,6 @@ int main(int argc, char *argv[]) {
     int setsize = 10240;
     int* fd_array = (int *) malloc(1024 * sizeof(int) );
     int fd_tail = 0; //int fd_head = 0;
-    //memset(&fd_array, -1, sizeof(fd_array));
     
     epollState epstate;
     epstate.epoll_fd = -1;
@@ -215,20 +161,20 @@ int main(int argc, char *argv[]) {
 
     int* udp_socket_array;
     udp_socket_array = (int *) malloc(expected_connections * sizeof(int) );
-
-    // fdreq_tracking_array tracks the number of reqs in a socket every time a epoll_wait call returns    
-    int* fdreq_tracking_array;
-    int fd_index_diff; // the fd of these sockets starts at 4, usually so the diff is 4
-    fdreq_tracking_array = (int *) malloc(expected_connections * sizeof(int) );
-
     struct sockaddr_in* server_addr_array;
     server_addr_array = (struct sockaddr_in *) malloc( expected_connections * sizeof(struct sockaddr_in) );
 
     for(int server_index = 0; server_index < expected_connections; server_index++){
-        //printf("socket creation,");
+        printf("socket creation,");
         if ((udp_socket_array[server_index] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0){
 		    perror("socket() failed\n");
             exit(1);
+        }
+
+        if(server_index == 0){
+            if(sock_enable_timestamping(udp_socket_array[server_index]) < 0){
+                printf("socket %d timestamping can't be enabled\n", udp_socket_array[server_index]); 
+            }
         }
 
         struct sockaddr_in servAddr;
@@ -237,7 +183,7 @@ int main(int argc, char *argv[]) {
         servAddr.sin_addr.s_addr = inet_addr(recv_ip_addr);
         servAddr.sin_port = htons(recv_port_start); 
         server_addr_array[server_index] = servAddr;
-        //printf("socket:%d,port:%u\n", udp_socket_array[server_index], recv_port_start);
+        printf("socket:%d,port:%u\n", udp_socket_array[server_index], recv_port_start);
         recv_port_start++;        
 
         if(UDPSocketSetup(udp_socket_array[server_index], servAddr) == -1){
@@ -245,38 +191,24 @@ int main(int argc, char *argv[]) {
             exit(1);
         }
     }
-    fd_index_diff = udp_socket_array[0]; 
 
-    pthread_t *feedback_thread;
-    feedback_thread_state* fbk_state;
-    feedback_thread = (pthread_t *)malloc( 1 * sizeof(pthread_t) );
-    fbk_state = (feedback_thread_state *)malloc( 1 * sizeof(feedback_thread_state) );
-
-    // Init feedback_thread_state fbk_state
-    fbk_state->tid = 0;
-    fbk_state->feedback_period_us = 1000; // 1000 microseconds period for feedback
-    fbk_state->feedback_counter = 0;
-
-    if ((fbk_state->fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0){
-		perror("socket() failed\n");
-        exit(1);
-    }
-
-    struct sockaddr_in routerAddr;                  // Local address
-	memset(&routerAddr, 0, sizeof(routerAddr));       // Zero out structure
-	routerAddr.sin_family = AF_INET;                // IPv4 address family
-	routerAddr.sin_addr.s_addr = inet_addr(routerIP); // an incoming interface
-	routerAddr.sin_port = htons(recv_port_start);          // Local port
-    int routerAddrLen = sizeof(routerAddr);
-
-    fbk_state->server_addr = routerAddr;    
-    memset(&fbk_state->recv_header, 0, sizeof(alt_header));
-    memset(&fbk_state->send_header, 0, sizeof(alt_header));
     //pthread_create(feedback_thread, NULL, feedback_mainloop, fbk_state);
 
 
-    struct sockaddr_in clntAddr; // Client address
-    memset(&clntAddr, 0, sizeof(clntAddr));
+    //struct sockaddr_in clntAddr; // Client address
+    //memset(&clntAddr, 0, sizeof(clntAddr));
+    //int clntAddrLen = sizeof(clntAddr);
+
+    struct timespec send_ts, recv_ts;
+    uint32_t opt_id = 0;
+    struct timestamp_info send_info = {send_ts, opt_id};
+    struct timestamp_info recv_info = {recv_ts, opt_id};
+
+    struct sockaddr_in clntAddr;                  // Local address
+	memset(&clntAddr, 0, sizeof(clntAddr));       // Zero out structure
+	clntAddr.sin_family = AF_INET;                // IPv4 address family
+	clntAddr.sin_addr.s_addr = inet_addr(clientIP); // an incoming interface
+	clntAddr.sin_port = htons(recv_port_start);          // Local port
     int clntAddrLen = sizeof(clntAddr);
 
     alt_header alt_recv_header;
@@ -299,45 +231,67 @@ int main(int argc, char *argv[]) {
     ssize_t total_recv_bytes = 0;
     ssize_t total_send_bytes = 0;
     int accept_connections = 0;
-    int max_retries = 20;
+    int max_retries = 5;
     pkt_counter=0;
     uint64_t log_counter=0;
     int once = 0;    
 
     char logfilename[100];
-    const char log[] = ".qevents";
-    const char filename_prefix[] = "/home/shw328/kvstore/log/";
+    const char log[] = ".log";
+    const char filename_prefix[] = "/tmp/";
 
-    snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[3]) +  sizeof(argv[5]) + sizeof(identify_string) +
-        sizeof(log) + 15, "%s%s_%s_%sthd%s", filename_prefix, identify_string, argv[5], argv[3], log);
+    snprintf(logfilename, sizeof(filename_prefix) + sizeof(log) + 30, "%s%s%s", filename_prefix, expname, log);
     FILE* output_fptr = fopen(logfilename, "w+");
+    if(output_fptr == NULL){
+        printf("FILE* isn't good\n");
+        fclose(output_fptr);
+        exit(0);
+    }
+    //fprintf(output_fptr, "file opened!\n");
+    //fflush(output_fptr);
 
-    //TESTING DROP!
-    int drop_once_req310 = 0;
-    int drop_once_req510 = 0;
+    struct iovec tx_iovec;
+    tx_iovec.iov_base = (void*) &alt_send_header;
+    tx_iovec.iov_len = sizeof(alt_header);
 
+    struct msghdr tx_hdr = {0};
+    tx_hdr.msg_name = (void*) &clntAddr;
+    tx_hdr.msg_namelen =  (socklen_t) clntAddrLen;
+    tx_hdr.msg_iov = &tx_iovec;
+    tx_hdr.msg_iovlen = 1;
+
+    char recv_control[CONTROL_LEN] = {0};
+    struct iovec rx_iovec;
+    rx_iovec.iov_base = (void*) &alt_recv_header;
+    rx_iovec.iov_len = sizeof(alt_header);
+    
+    struct msghdr rx_hdr = {0};
+    rx_hdr.msg_name = (void*) &clntAddr;
+    rx_hdr.msg_namelen =  (socklen_t) clntAddrLen;
+    rx_hdr.msg_iov = &rx_iovec;
+    rx_hdr.msg_iovlen = 1;
+    rx_hdr.msg_control = recv_control;
+	rx_hdr.msg_controllen = CONTROL_LEN;
+
+    uint32_t last_optid = 0;
+    int outoforder_timestamp = 0;
+    uint32_t req_counter = 0;
     while(1){
     //while(!closed_loop_done){
         //printf("epoll_wait: waiting for connections\n");
         //printf("accepted connections: %d\n", accept_connections);
         int num_events = epoll_wait(epstate.epoll_fd, epstate.events, setsize, -1);
+        clock_gettime(CLOCK_REALTIME, &ts1);
         if(num_events == -1){
             perror("epoll_wait");
             exit(1);
         }
 
-        //if (num_events > 0) {
-            //printf("num_events:%d\n", num_events);
-            //fprintf(output_fptr,"%d\n", num_events);
-            //pkt_counter = pkt_counter + (uint64_t) num_events;
-            //fprintf(output_fptr,"%ld\n", pkt_counter);
-        //printf("fd:");
-        for (int j = 0; j < num_events; j++){
-            struct epoll_event *e = epstate.events+j;
-            //printf("%d,", e->data.fd);
-            int drained_flag = 0;
-            int req_perloop_counter = 0;
-            while(!drained_flag){
+        //int client_fd = 0;    
+        if (num_events == 1) {
+            for (int j = 0; j < num_events; j++) {
+                struct epoll_event *e = epstate.events+j;
+
                 ssize_t numBytes = 0;
                 ssize_t recv_byte_perloop = 0;
                 ssize_t send_byte_perloop = 0;
@@ -345,33 +299,29 @@ int main(int argc, char *argv[]) {
                 int send_retries = 0;                    
                 while(recv_byte_perloop < sizeof(alt_header)){
                     //numBytes = recvfrom(udp_socket_array[sock_index], (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
-                    numBytes = recvfrom(e->data.fd, (void*)&alt_recv_header, sizeof(alt_header), MSG_DONTWAIT, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
+                    //numBytes = recvfrom(e->data.fd, (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
                     //numBytes = recv(e->data.fd, recv_buffer, 20, MSG_DONTWAIT);
+                    numBytes = recvmsg(e->data.fd, &rx_hdr, 0);
+
                     if (numBytes < 0){
-                        if((errno == EAGAIN) || (errno == EWOULDBLOCK)){ 
-                            recv_retries++;   
-                            if(recv_retries == max_retries){
-                                drained_flag = 1;
-                                //send_byte_perloop = sizeof(alt_header); //force it not entering send-loop
-                                break;
-                            }                        
-                            continue; 
+                        if((errno == EAGAIN) || (errno == EWOULDBLOCK)){                            
+                               continue; 
                         }
                         else{
                             printf("recvfrom failed on fd:%d\n", e->data.fd); 
-                            send_byte_perloop = sizeof(alt_header);
+                            send_byte_perloop = 20;
                             break;
                         }
                     }
                     else if (numBytes == 0){ //&& recv_byte_perloop == 20){
-                        if(recv_byte_perloop == sizeof(alt_header)){
+                        if(recv_byte_perloop == 20){
                             break;
                         }
                         else{
                             recv_retries++;
                             printf("recv 0 byte on fd:%d\n", e->data.fd);
                             if(recv_retries == max_retries){
-                                send_byte_perloop = sizeof(alt_header); //force it not entering send-loop
+                                send_byte_perloop = 20; //force it not entering send-loop
                                 break;
                             }
                             else{
@@ -384,37 +334,17 @@ int main(int argc, char *argv[]) {
                         total_recv_bytes = total_recv_bytes + numBytes;
                         //printf("recv:%zd on fd %d\n", numBytes, e->data.fd);
                     }
-                }                
-
-                if(drained_flag){
-                    //if(req_perloop_counter > 1)
-                        //printf("fd: %d, drained after %d reqs\n", e->data.fd, req_perloop_counter);
-                    break;
                 }
-                /*else{
-                    printf("recv_reqid:%" PRIu32 "\n", alt_recv_header.request_id);
-                }*/
-                //printf("recv_reqid:%" PRIu32 "\n", alt_recv_header.request_id);
 
-                //TESTING DROP!
-                // if(alt_recv_header.request_id == 310 && drop_once_req310 == 0){
-                //     drop_once_req310 = 1;
-                //     break;
-                // }                    
-
-                // if(alt_recv_header.request_id == 510 && drop_once_req510 == 0){
-                //     drop_once_req510 = 1;
-                //     break;
-                // }
-
-                    //clock_gettime(CLOCK_REALTIME, &ts1);
-                    //sleep_ts1=ts1;
-                    //realnanosleep(10*1000, &sleep_ts1, &sleep_ts2); // processing time 10 us
+                //clock_gettime(CLOCK_REALTIME, &ts1);
+                //sleep_ts1=ts1;
+                //realnanosleep(10*1000, &sleep_ts1, &sleep_ts2); // processing time 10 us
 
                 while(send_byte_perloop < sizeof(alt_header)){
                     //numBytes = send(e->data.fd, send_buffer, 20, MSG_DONTWAIT);
                     //alt_send_header.alt_dst_ip = server_addr_array[0].sin_addr.s_addr;
-                    ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));                    
+                    //ssize_t numBytes = sendto(e->data.fd, (void*) &alt_send_header, sizeof(alt_header), MSG_DONTWAIT, (struct sockaddr *) &clntAddr, sizeof(clntAddr));                    
+                    numBytes= sendmsg(e->data.fd, &tx_hdr, 0);
                     //ssize_t numBytes = sendto(udp_socket_array[sock_index], (void*) &alt_send_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
                     if (numBytes < 0){
                         if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
@@ -432,6 +362,17 @@ int main(int argc, char *argv[]) {
                         if(send_byte_perloop == 20){
                             break;
                         }
+                        else{
+                            printf("send 0 byte on fd:%d\n", e->data.fd);
+                            /*send_retries++;
+                            printf("send 0 byte on fd:%d\n", e->data.fd);
+                            if(send_retries == max_retries){
+                                break;
+                            }
+                            else{
+                                continue;
+                            }*/
+                        }
                     }
                     else{
                         send_byte_perloop = send_byte_perloop + numBytes;
@@ -439,34 +380,77 @@ int main(int argc, char *argv[]) {
                         //printf("send:%zd on fd %d\n", numBytes, e->data.fd);                
                     }
                 }
+            }
+            clock_gettime(CLOCK_REALTIME, &ts2);
 
-                req_perloop_counter++;
-            }
-            //TODO: update req-fd counter here
-            fdreq_tracking_array[e->data.fd - fd_index_diff] = req_perloop_counter;
-        }
-        //printf("\n");
-        //printf("recv:%zd, send:%zd\n", total_recv_bytes, total_send_bytes);
+            clock_gettime(CLOCK_REALTIME, &ts3);
 
-        //TODO: write req-fd counters to a file
-        if(num_events > 0){
-            int sum = 0;
-            int non_zero_fd = 0;
-            for(int index = 0; index < expected_connections; index++){
-                //fprintf(output_fptr,"%d,", fdreq_tracking_array[index]);
-                sum += fdreq_tracking_array[index];
-                if(fdreq_tracking_array[index] > 0)
-                   non_zero_fd+=1; 
-                fdreq_tracking_array[index] = 0;
+            // Handle udp_get_rx_timestamp failures
+            // we can make it a while loop to get the proper rx_timestamp
+            int print_rx_counter = 0;
+            while(udp_get_rx_timestamp(&rx_hdr, &recv_info) < 0){
+                continue;
+                // if(print_rx_counter){
+                //     printf("+");
+                // }
+                // else{
+                //     printf("extracting rx timestamp fails");   
+                //     print_rx_counter++;         
+                // }
             }
-            if(non_zero_fd > 0){
-                fprintf(output_fptr, "%d,%d\n", non_zero_fd, sum);
+            // if(print_rx_counter)
+            //     printf("\n");     
+
+            //if(print_tx_counter)
+            //    printf("\n");
+
+            int print_tx_counter = 0;            
+            while(udp_get_tx_timestamp(udp_socket_array[0], &send_info) < 0){
+                continue;
+                // if(print_tx_counter){
+                //     printf("+");
+                // }
+                // else{
+                //     printf("extracting tx timestamp fails at req %u", req_counter);
+                //     print_tx_counter++;
+                // }
             }
-            //fprintf(output_fptr, "\n");
+
+            //TODO: solbve the reordering issue with tx_timestamps?
+            if(send_info.optid <= last_optid && send_info.optid!=0){
+                printf("out-of-order based on optid\n");
+                printf("send_info.optid:%u, last_optid:%u\n",send_info.optid,last_optid);
+                outoforder_timestamp++;
+            }
+            else{
+                last_optid = send_info.optid;
+            }
+     
+
+            uint64_t host_latency = clock_gettime_diff_ns(&recv_info.time, &send_info.time);
+            uint64_t app_latency = clock_gettime_diff_ns(&ts1, &ts2);
+            if(host_latency < app_latency){
+                //fprintf(output_fptr, "%" PRIu64 ",%" PRIu64 "\n", host_latency, app_latency);
+                printf("\n--------------\n host_latency < app_latency \n--------------\n");
+                printf("app_latency:%" PRIu64 "\n", app_latency);
+                printf("host_latency:%" PRIu64 "\n", host_latency);
+            }
+            else{
+                fprintf(output_fptr, "%" PRIu64 ",%" PRIu64 "\n", host_latency, app_latency);
+            }
+            clock_gettime(CLOCK_REALTIME, &ts4); 
+            uint64_t log_latency = clock_gettime_diff_ns(&ts3, &ts4);
+            printf("log_latency:%" PRIu64 "\n", log_latency);
         }
+        else if(num_events == 0){
+            printf("no event!\n");
+        }
+        else{
+            printf("not closed-loop right!\n");
+        }
+        req_counter++;        
         fflush(output_fptr);
-    }
-    //fflush(output_fptr);
+    }    
     //pthread_join(*feedback_thread, NULL);
 
 	printf("closing sockets then\n");

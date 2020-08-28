@@ -25,9 +25,8 @@
 
 #define OPEN_LOOP_ENABLE 1
 #define MAX_NUM_REQ 100*1000
+#define MAX_NUM_TEST 1000*100
 #define MAX_NUM_SAMPLE 100*1000 //100*1000
-
-//#define MAX_PENDING_REQ 20
 
 // typedef struct __attribute__((__packed__)) {
 //   uint16_t service_id;    // Type of Service.
@@ -37,16 +36,6 @@
 //   in_addr_t alt_dst_ip;
 //   in_addr_t alt_dst_ip2;
 // } alt_header;
-
-typedef struct {
-    uint32_t tid;
-    int fd;
-    struct sockaddr_in server_addr;
-    uint32_t pending_req;
-    //[UNTESTED]: timer_event with send_header and recv_header
-    // it assumes 1 outstanding sent request
-    rto_timer_event* timer_event;
-} udp_pseudo_connection;
 
 typedef struct {
     //per thread state
@@ -62,7 +51,7 @@ typedef struct {
     udp_pseudo_connection* conn_list;
     //[UNTESTED]: send_buffer and timer_wheel
     multi_dest_buffer buffer;
-    simple_timer_wheel timer_wheel;
+    simple_timer_wheel timer_wheel;    
 } udp_thread_state; // per thread stats
 
 typedef struct {
@@ -94,12 +83,13 @@ void* fake_mainloop(void *arg){
     return NULL;
 }
 
-//TODO: open-loop connections sendto/recvfrom for UDP
+//open-loop connections sendto/recvfrom for UDP
 void* openloop_multiple_connections(void *arg){
     printf("thread_openloop\n");
     udp_thread_state* state = (udp_thread_state*) arg;
     udp_pseudo_connection* conn_list = state->conn_list;
     int once = 0;
+    int max_retries = 20;
 
     cpu_set_t cpuset;
     pthread_t thread = pthread_self();
@@ -126,11 +116,11 @@ void* openloop_multiple_connections(void *arg){
     int servAddrLen = sizeof(conn_list[0].server_addr);
     //state->sent_req++;
     //while(state->completed_req < state->sent_req){
-    while(state->completed_req <  MAX_NUM_REQ*state->conn_perthread){       
-    //while(!closed_loop_done){
+    //while(state->completed_req <  MAX_NUM_TEST*state->conn_perthread){       
+    while(!closed_loop_done){ // the real one
         current_time = clock_gettime_us(&ts2);
-        while( current_time >= next_send && state->sent_req < MAX_NUM_REQ*state->conn_perthread){
-        //while( current_time >= next_send && !closed_loop_done){
+        //while( current_time >= next_send && state->sent_req < MAX_NUM_TEST*state->conn_perthread){
+        while( current_time >= next_send && !closed_loop_done){ // the real one
             uint32_t req_id = state->sent_req;
             if(req_id > MAX_NUM_REQ){
                 //printf("Having reqs > MAX_NUM_REQ, randomly assign an index\n");
@@ -139,27 +129,33 @@ void* openloop_multiple_connections(void *arg){
             interval = (uint64_t) state->arrival_pattern[req_id];
             next_send = current_time + interval;
 
+            rto_timer_event* event = acquire_multi_dest_header(&conn_list[send_conn_id].buffer);
+            if(event == NULL){
+                break;
+            }
+
             // random replica selection for send dest
             if(is_random_selection){
                 int replica_num = rand()%2;
                 if(replica_num == 0){
-                    conn_list[send_conn_id].server_addr.sin_addr.s_addr = conn_list[send_conn_id].timer_event->send_header.alt_dst_ip;
+                    conn_list[send_conn_id].server_addr.sin_addr.s_addr = event->send_header.alt_dst_ip;
+                    //conn_list[send_conn_id].server_addr.sin_addr.s_addr = conn_list[send_conn_id].timer_event->send_header.alt_dst_ip;
                     //counter_replica0++;
                 }
                 else{
-                    conn_list[send_conn_id].server_addr.sin_addr.s_addr = conn_list[send_conn_id].timer_event->send_header.alt_dst_ip2;
+                    conn_list[send_conn_id].server_addr.sin_addr.s_addr = event->send_header.alt_dst_ip2;
+                    //conn_list[send_conn_id].server_addr.sin_addr.s_addr = conn_list[send_conn_id].timer_event->send_header.alt_dst_ip2;
                     //counter_replica1++;
                 }
             }
 
-            //int servAddrLen = sizeof(conn_list[send_conn_id].server_addr);
-            //[UNTESTED]: send_buffer's acquire_multi_dest_header
-            conn_list[send_conn_id].timer_event = acquire_multi_dest_header(&state->buffer);
-            conn_list[send_conn_id].timer_event->fd = conn_list[send_conn_id].fd;
-            conn_list[send_conn_id].timer_event->server_addr = &conn_list[send_conn_id].server_addr;
+            //printf("conn_list[send_conn_id].pending_event[pending_index]:%p\n", (void*) conn_list[send_conn_id].pending_event[pending_index]);
+            event->conn_index = send_conn_id;
+            event->send_header.request_id = state->tid * MAX_NUM_TEST + req_id;
+
             ssize_t send_bytes = 0;
             while(send_bytes < sizeof(alt_header)){
-                numBytes = sendto(conn_list[send_conn_id].fd, (void*) &conn_list[send_conn_id].timer_event->send_header, sizeof(alt_header), 0, (struct sockaddr *) &conn_list[send_conn_id].server_addr, (socklen_t) servAddrLen);
+                numBytes = sendto(conn_list[send_conn_id].fd, (void*) &event->send_header, sizeof(alt_header), 0, (struct sockaddr *) &conn_list[send_conn_id].server_addr, (socklen_t) servAddrLen);
 
                 if (numBytes < 0){
                     printf("send() failed\n");
@@ -171,21 +167,23 @@ void* openloop_multiple_connections(void *arg){
                     //printf("send:%zd\n", numBytes);
                 }
             }
-            conn_list[send_conn_id].pending_req++;            
-            state->sent_req++; // update the sent_req counter for the thread
-            send_conn_id = (send_conn_id + 1)%state->conn_perthread;
             //if(send_conn_id == 3)
             //printf("send_conn_id:%" PRIu32 "\n", send_conn_id);
 
             clock_gettime(CLOCK_REALTIME, &ts3);
             uint64_t advance_tick = clock_gettime_diff_us(&ts3, &ts2);
             state->timer_wheel.current_tick = state->timer_wheel.current_tick + advance_tick;
-            printf("current tick:%" PRIu64 ",", state->timer_wheel.current_tick);
+            //printf("current tick:%" PRIu64 ",", state->timer_wheel.current_tick);
 
-            uint32_t scheduled_index = (state->timer_wheel.current_tick + state->timer_wheel.rto_interval)% state->timer_wheel.wheel_tick_size;            
-            printf("scheduled_tick:%" PRIu64 "\n", state->timer_wheel.wheel[scheduled_index].tick);
+            uint32_t scheduled_index = ( (uint32_t) state->timer_wheel.current_tick + state->timer_wheel.rto_interval)% state->timer_wheel.wheel_tick_size;            
+            //TODO: scheduld req            
+            // [TEMP] comment out to run the whole program!
+            //printf("scheduled_tick:%" PRIu64 "\n", state->timer_wheel.wheel[scheduled_index].tick);
+            schedule_event_timer_wheel(&state->timer_wheel, event, scheduled_index);
 
-            schedule_event_timer_wheel(&state->timer_wheel, &conn_list[send_conn_id].timer_event, scheduled_index);
+            event->received_tick = UINTMAX_MAX;          
+            state->sent_req++; // update the sent_req counter for the thread
+            send_conn_id = (send_conn_id + 1)%state->conn_perthread;
 
             current_time = clock_gettime_us(&ts2);
         }
@@ -194,120 +192,208 @@ void* openloop_multiple_connections(void *arg){
         int num_events = epoll_wait(state->epstate.epoll_fd, state->epstate.events, 10*state->conn_perthread, 0);
         //printf("thread id %" PRIu32 "num_events %d\n", state->tid, num_events);
         for (int i = 0; i < num_events; i++) {
+            clock_gettime(CLOCK_REALTIME, &ts4);
             uint32_t conn_index = state->epstate.events[i].data.u32;
             //printf("\nprocess epoll_wait events, conn index %" PRIu32 "\n", conn_index);
             //printf("events fd:%d, conn_list fd:%d\n", state->epstate.events[i].data.fd, conn_list[conn_index].fd);
-            ssize_t recv_byte_perloop = 0;
-            conn_list[conn_index].timer_event->received_tick = UINTMAX_MAX;
-            uint8_t timeout_flag = 0;
-            clock_gettime(CLOCK_REALTIME, &ts4);
-            while(recv_byte_perloop < sizeof(alt_header)){
-                //int servAddrLen = sizeof(conn_list[conn_index].server_addr);
-                //numBytes = recvfrom(state->epstate.events[i].data.fd, (void*) &conn_list[conn_index].recv_header, sizeof(alt_header), 0, (struct sockaddr *) &conn_list[conn_index].server_addr, (socklen_t*) &servAddrLen);
-                numBytes = recvfrom(conn_list[conn_index].fd, (void*) &conn_list[conn_index].timer_event->recv_header, sizeof(alt_header), MSG_DONTWAIT, (struct sockaddr *) &conn_list[conn_index].server_addr, (socklen_t*) &servAddrLen);
-                if (numBytes < 0){
-                    if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
-                        clock_gettime(CLOCK_REALTIME, &ts5);
-                        uint64_t diff_us = clock_gettime_diff_us(&ts5, &ts4);
-                        if(diff_us > state->timer_wheel.rto_interval){
-                            timeout_flag = 1;
+            int drained_flag = 0;
+            int req_perloop_counter = 0;
+            while(!drained_flag){
+                //printf("thread id %" PRIu32 " not drained\n", state->tid);
+                ssize_t recv_byte_perloop = 0;
+                int recv_retries = 0;            
+                uint8_t timeout_flag = 0;            
+                while(recv_byte_perloop < sizeof(alt_header)){
+                    //int servAddrLen = sizeof(conn_list[conn_index].server_addr);
+                    numBytes = recvfrom(conn_list[conn_index].fd, (void*) &conn_list[conn_index].buffer.temp_recv_buffer, sizeof(alt_header), MSG_DONTWAIT, (struct sockaddr *) &conn_list[conn_index].server_addr, (socklen_t*) &servAddrLen);
+                    //numBytes = recvfrom(conn_list[conn_index].fd, (void*) &conn_list[conn_index].timer_event->recv_header, sizeof(alt_header), MSG_DONTWAIT, (struct sockaddr *) &conn_list[conn_index].server_addr, (socklen_t*) &servAddrLen);
+                    if (numBytes < 0){
+                        if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
+                        //printf("thread id %" PRIu32 "EAGAIN\n", state->tid);
+                            // clock_gettime(CLOCK_REALTIME, &ts5);
+                            // uint64_t diff_us = clock_gettime_diff_us(&ts5, &ts4);
+                            // if(diff_us > state->timer_wheel.rto_interval){
+                            //     printf("RTO! in recv loop\n");
+                            //     timeout_flag = 1;
+                            //     break;
+                            // }
+                            recv_retries++;   
+                            if(recv_retries == max_retries){
+                                drained_flag = 1;
+                                break;
+                            }   
+                            continue;
+                        }
+                        else{
+                            printf("thread id %" PRIu32 " recv() failed\n", state->tid);
+                            //break;
+                            exit(1);
+                        }
+                    }
+                    else if(numBytes==0){
+                        printf("thread id %" PRIu32 " recv() 0 bytes\n", state->tid);
+                        if(recv_byte_perloop == sizeof(alt_header)){
                             break;
                         }
-                        continue;
+                        else{
+                            recv_retries++;
+                            printf("recv 0 byte on fd:%d\n",conn_list[conn_index].fd);
+                            if(recv_retries == max_retries){
+                                drained_flag = 1;
+                                break;
+                            }
+                            else{
+                                continue;
+                            }
+                        }
                     }
                     else{
-                        printf("thread id %" PRIu32 " recv() failed\n", state->tid);
-                        //break;
-                        exit(1);
+                        recv_byte_perloop = recv_byte_perloop + numBytes;
+                        state->recv_bytes += numBytes;
+                        //printf("thread id %" PRIu32 "recv:%zd on fd:%d\n", state->tid, numBytes, conn_list[conn_index].fd);
                     }
                 }
-                else if(numBytes==0){
-                    printf("thread id %" PRIu32 " recv() 0 bytes\n", state->tid);
-                    /*if(recv_retries == 0){
-                        break;
-                    }
-                    else{
-                        recv_retries--;
-                    }*/
+
+                if(drained_flag){
+                    //printf("thread id %" PRIu32 " is drained\n", state->tid);
+                    break;
+                }
+
+                //for reordering
+                uint32_t base_index = conn_list[conn_index].buffer.ack_tail;
+                uint32_t upper_bound_index  = conn_list[conn_index].buffer.ack_head;
+                rto_timer_event* tail_event = &conn_list[conn_index].buffer.send_timer[base_index];            
+                if(conn_list[conn_index].buffer.temp_recv_buffer.request_id == tail_event->send_header.request_id){
+                    memcpy(&tail_event->recv_header, &conn_list[conn_index].buffer.temp_recv_buffer, sizeof(alt_header));
                 }
                 else{
-                    recv_byte_perloop = recv_byte_perloop + numBytes;
-                    state->recv_bytes += numBytes;
-                    //printf("thread id %" PRIu32 "recv:%zd on fd:%d\n", state->tid, numBytes, conn_list[conn_index].fd);
+                    base_index+=1;
+                    while(base_index < upper_bound_index){
+                        tail_event = &conn_list[conn_index].buffer.send_timer[base_index];
+                        if(conn_list[conn_index].buffer.temp_recv_buffer.request_id == tail_event->send_header.request_id){
+                            memcpy(&tail_event->recv_header, &conn_list[conn_index].buffer.temp_recv_buffer, sizeof(alt_header));
+                            break;
+                        }
+                        base_index+=1;
+                    }
                 }
-            }
 
-            clock_gettime(CLOCK_REALTIME, &ts5);
-            uint64_t advance_tick = clock_gettime_diff_us(&ts5, &ts4);
-            state->timer_wheel.current_tick = state->timer_wheel.current_tick + advance_tick;
+                //[TEMP] comment this out when it's fixed
+                //reclaim_multi_dest_buf2(&conn_list[conn_index].buffer, tail_event, state->conn_perthread, state->tid);
 
-            if(!timeout_flag){
-                //printf("thread id %" PRIu32 ",fd %" PRIu32 ",recv %zd\n", state->tid, conn_list[conn_index].fd, numBytes);
+                clock_gettime(CLOCK_REALTIME, &ts5);
+                uint64_t advance_tick = clock_gettime_diff_us(&ts5, &ts4);
+                //uint64_t diff_us = clock_gettime_diff_us(&ts5, &ts2);
+                //printf("recv latency: %" PRIu64 "\n", diff_us);
+                state->timer_wheel.current_tick = state->timer_wheel.current_tick + advance_tick;
+                tail_event->received_tick = state->timer_wheel.current_tick;
+                state->completed_req+=1;
+
+                //printf("recvfrom fd %d, temp recv request_id:%" PRIu32 ", event send request_id:%" PRIu32 "\n", 
+                    //conn_list[conn_index].fd, conn_list[conn_index].buffer.temp_recv_buffer.request_id, tail_event->recv_header.request_id);
+
+                // if(!timeout_flag){
+                //     //printf("recvfrom fd %d request_id:%" PRIu32 ",", conn_list[conn_index].fd, conn_list[conn_index].pending_event[pending_index]->recv_header.request_id);
+                //     //printf("thread id %" PRIu32 ",fd %" PRIu32 ",recv %zd\n", state->tid, conn_list[conn_index].fd, numBytes);
+                //printf("thread id %" PRIu32 ", send:%" PRIu32 ", recv:%" PRIu32 "\n", state->tid, state->sent_req ,state->completed_req);
+
                 if(state->completed_req%1000 == 0){
                     printf("*** thread id %" PRIu32 ", send:%" PRIu32 ", recv:%" PRIu32 "\n", state->tid, state->sent_req ,state->completed_req);
                 }
-                state->completed_req+=1;
-                conn_list[conn_index].timer_event->received_tick = state->timer_wheel.current_tick;
-            }
+                //     state->completed_req+=1;
+                // }
+                // else{
+                //     printf("timeout request_id:%" PRIu32 ",", conn_list[conn_index].pending_event[pending_index]->recv_header.request_id);
+                //     //printf("timeout\n");
+                // } 
+            }         
         }
         clock_gettime(CLOCK_REALTIME, &ts4);
 
-        // [UNTESTED]: pickup the progress on timer wheel
-        uint32_t processed_index = state->timer_wheel.processed_index;
-        int64_t pending_slots = (int64_t) (state->timer_wheel.current_tick - state->timer_wheel.wheel[processed_index].tick);
-        while(pending_slots > 0){
+        //TODO: pickup the progress on timer wheel
+        // [TEMP] comment out to run the whole program!
+        if(num_events > 0){        
+            //printf("\n--timer-wheel processing--\n");
             uint32_t processed_index = state->timer_wheel.processed_index;
-            timer_wheel_slot current_slot = state->timer_wheel.wheel[processed_index];            
-            if(current_slot.event_head != NULL){ 
-                printf("non-empty slot\n");
-                processing_openloop_timer_wheel(&state->timer_wheel, &state->buffer);
+            int64_t pending_slots = (int64_t) (state->timer_wheel.current_tick - state->timer_wheel.wheel[processed_index].tick);
+            //if(pending_slots > 0){
+                //printf("timer-wheel process slots:%" PRId64 "\n", pending_slots);
+            //}
+            //printf("current tick:%" PRIu64 "\n", state->timer_wheel.current_tick);
+            while(pending_slots > 0){            
+                uint32_t processed_index = state->timer_wheel.processed_index;
+                timer_wheel_slot current_slot = state->timer_wheel.wheel[processed_index];            
+                if(current_slot.event_head != NULL){                     
+                    processing_openloop_timer_wheel(&state->timer_wheel, conn_list, state->conn_perthread, state->tid);
+                }
+                state->timer_wheel.wheel[processed_index].tick = state->timer_wheel.wheel[processed_index].tick + (uint64_t) state->timer_wheel.wheel_tick_size;
+                state->timer_wheel.processed_index = (state->timer_wheel.processed_index + 1) % state->timer_wheel.wheel_tick_size;
+                pending_slots--;
             }
-            state->timer_wheel.wheel[processed_index].tick = state->timer_wheel.wheel[processed_index].tick + (uint64_t) state->timer_wheel.wheel_tick_size;
-            state->timer_wheel.processed_index = (state->timer_wheel.processed_index + 1) % state->timer_wheel.wheel_tick_size;
-            pending_slots--;
         }
 
         clock_gettime(CLOCK_REALTIME, &ts5);
         uint64_t advance_tick = clock_gettime_diff_us(&ts5, &ts4);
         state->timer_wheel.current_tick = state->timer_wheel.current_tick + advance_tick;
 
-        // [UNTESTED]: resending operation
-        int8_t* resending_map = state->buffer.out_of_order_map;
-        uint32_t resending_index = state->buffer.ack_tail;
-        int32_t out_of_order_recv_counter = state->buffer.out_of_order_recv;
-        while(out_of_order_recv_counter > 0){
-            if(resending_map[resending_index] == 0){
-                //resend operation
-                rto_timer_event rto_event = state->buffer.send_timer[resending_index];
-                ssize_t send_bytes = 0;
-                while(send_bytes < sizeof(alt_header)){
-                    numBytes = sendto(rto_event.fd, (void*) &rto_event.send_header, sizeof(alt_header), 0, (struct sockaddr *) rto_event.serv_addr, (socklen_t) servAddrLen);
-                    if (numBytes < 0){
-                        printf("send() failed\n");
-                        exit(1);
-                    }
-                    else{
-                        send_bytes = send_bytes + numBytes;
-                        state->send_bytes += numBytes;
-                        //printf("send:%zd\n", numBytes);
-                    }
-                }
-                clock_gettime(CLOCK_REALTIME, &ts6);
-                state->timer_wheel.current_tick = state->timer_wheel.current_tick + advance_tick;
-                uint32_t scheduled_index = (state->timer_wheel.current_tick + state->timer_wheel.rto_interval)% state->timer_wheel.wheel_tick_size;            
-                //printf("scheduled_tick:%" PRIu64 "\n", state->timer_wheel.wheel[scheduled_index].tick);
-                schedule_event_timer_wheel(&state->timer_wheel, &rto_event, scheduled_index);
-            }
-            else if(resending_map[resending_index] == 2) {
-                //skip this index
-                out_of_order_recv_counter--;
-            }
-            else{
-                continue;
-            }
-            resending_index = resending_index + 1;
-        }
+        // TODO: use rto_buffer in state->buffer for resending
+        // [TEMP] comment out to run the whole program!
+        // for(uint32_t resend_conn_index = 0; resend_conn_index < state->conn_perthread; resend_conn_index++){
+        //     while(conn_list[resend_conn_index].rto_counter > 0){
+        //         clock_gettime(CLOCK_REALTIME, &ts5);
+        //         rto_timer_event* rto_event = conn_list[resend_conn_index].rto_buffer[conn_list[resend_conn_index].rto_counter-1];  
+        //         rto_event->received_tick = UINTMAX_MAX;
 
+        //         printf("RTO-resend thread id:%" PRIu32 ",send request_id:%" PRIu32 "\n", state->tid, rto_event->send_header.request_id);
+
+        //         ssize_t send_bytes = 0;
+        //         while(send_bytes < sizeof(alt_header)){                
+        //             numBytes = sendto(conn_list[resend_conn_index].fd, (void*) &rto_event->send_header, sizeof(alt_header), 0, (struct sockaddr *) &conn_list[resend_conn_index].server_addr, (socklen_t) servAddrLen);
+        //             if (numBytes < 0){
+        //                 printf("send() failed\n");
+        //                 exit(1);
+        //             }
+        //             else{
+        //                 send_bytes = send_bytes + numBytes;
+        //                 state->send_bytes += numBytes;
+        //                 //printf("send:%zd\n", numBytes);
+        //             }
+        //         }
+
+        //         // ssize_t recv_byte_perloop = 0;
+        //         // while(recv_byte_perloop < sizeof(alt_header)){
+        //         //     numBytes = recvfrom(conn_list[resend_conn_index].fd, (void*) &rto_event->recv_header, sizeof(alt_header), 0, (struct sockaddr *) &conn_list[resend_conn_index].server_addr, (socklen_t*) &servAddrLen);
+        //         //     if (numBytes < 0){
+        //         //         if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
+        //         //             continue;
+        //         //         }
+        //         //         else{
+        //         //             printf("thread id %" PRIu32 " recv() failed\n", state->tid);
+        //         //             //break;
+        //         //             exit(1);
+        //         //         }
+        //         //     }
+        //         //     else if(numBytes==0){
+        //         //         printf("thread id %" PRIu32 " recv() 0 bytes\n", state->tid);
+        //         //     }
+        //         //     else{
+        //         //         recv_byte_perloop = recv_byte_perloop + numBytes;
+        //         //         state->recv_bytes += numBytes;
+        //         //         //printf("thread id %" PRIu32 "recv:%zd on fd:%d\n", state->tid, numBytes, conn_list[conn_index].fd);
+        //         //     }
+        //         // }
+        //         clock_gettime(CLOCK_REALTIME, &ts6);
+
+        //         uint64_t addtick = clock_gettime_diff_us(&ts6, &ts5);
+        //         state->timer_wheel.current_tick = state->timer_wheel.current_tick + addtick;
+        //         uint32_t scheduled_index = ( (uint32_t)state->timer_wheel.current_tick + state->timer_wheel.rto_interval)% state->timer_wheel.wheel_tick_size;            
+
+        //         printf("thread id:%" PRIu32 ",send request_id:%" PRIu32 ",scheduled_tick:%" PRIu64 "\n", state->tid, rto_event->send_header.request_id, state->timer_wheel.wheel[scheduled_index].tick);
+        //         schedule_event_timer_wheel(&state->timer_wheel, rto_event, scheduled_index);
+
+        //         conn_list[resend_conn_index].rto_counter--;
+        //     }
+        // }
         
     }
 
@@ -508,16 +594,13 @@ int main(int argc, char *argv[]) {
 
             openloop_thread_state[thread_id].conn_list[conn_index].server_addr = servAddr;
             openloop_thread_state[thread_id].conn_list[conn_index].tid = thread_id*2;
-            // TODO: ptr needs to be fixed
-            memset(&openloop_thread_state[thread_id].conn_list[conn_index].timer_event->send_header, 0, sizeof(alt_header));
-            openloop_thread_state[thread_id].conn_list[conn_index].timer_event->send_header.service_id = 1;
-            openloop_thread_state[thread_id].conn_list[conn_index].timer_event->send_header.request_id = 0;
-            openloop_thread_state[thread_id].conn_list[conn_index].timer_event->send_header.packet_id = 0;
-            openloop_thread_state[thread_id].conn_list[conn_index].timer_event->send_header.options = 10;
-            openloop_thread_state[thread_id].conn_list[conn_index].timer_event->send_header.alt_dst_ip = inet_addr(recv_ip_addr);
-            openloop_thread_state[thread_id].conn_list[conn_index].timer_event->send_header.alt_dst_ip2 = inet_addr(recv_ip_addr2);
 
-            memset(&openloop_thread_state[thread_id].conn_list[conn_index].timer_event->recv_header, 0, sizeof(alt_header));
+            if(init_multi_dest_buf(&openloop_thread_state[thread_id].conn_list[conn_index].buffer, 1000*100) < 0){
+                printf("buf_init fails\n");
+                exit(1);
+            }
+            openloop_thread_state[thread_id].conn_list[conn_index].rto_counter = 0;
+
             //add an event for each connection and assign u32 as the conn index
             AddEpollEventWithData(&openloop_thread_state[thread_id].epstate, openloop_thread_state[thread_id].conn_list[conn_index].fd,
                 conn_index, event_flag);
@@ -599,16 +682,12 @@ int main(int argc, char *argv[]) {
     clock_gettime(CLOCK_REALTIME, &ts_start);
     #ifdef OPEN_LOOP_ENABLE
     for (uint32_t thread_id = 0; thread_id < num_threads_openloop; thread_id++){
-        //[UNTESTED]: send_buffer and timer_wheel
-        if(init_multi_dest_buf(&openloop_thread_state[thread_id].buffer, 100) < 0){
-           printf("buf_init fails\n");
-           exit(1);
-        }
-
-        if(init_timer_wheel(&openloop_thread_state[thread_id].timer_wheel, 500) < 0){
+        //[UNTESTED]: timer_wheel
+        if(init_timer_wheel(&openloop_thread_state[thread_id].timer_wheel, 5000) < 0){
             printf("timer_wheel init fails\n");
             exit(1);
         }
+        openloop_thread_state[thread_id].timer_wheel.rto_interval = 2500;
 
         openloop_thread_state[thread_id].arrival_pattern = poisson_arrival_pattern;
         openloop_thread_state[thread_id].tid = thread_id*2;
@@ -631,11 +710,13 @@ int main(int argc, char *argv[]) {
 
     closed_loop_done = 0;
     for (uint32_t thread_id = 0; thread_id < num_threads_closedloop; thread_id++){
+        // [TEMP] we don't start closedloop_threads.
         pthread_create(&closedloop_threads[thread_id], NULL, closedloop_latency_measurement, &closedloop_thread_state[thread_id]);
     }
 
     printf("closedloop_thread:\n");
     for (uint32_t thread_id = 0; thread_id < num_threads_closedloop; thread_id++){
+        // [TEMP] we don't join closedloop_threads.
         pthread_join(closedloop_threads[thread_id], NULL);
         printf("thread id %" PRIu32 ":", closedloop_thread_state[thread_id].tid);
         printf("req:%" PRIu32 ",", closedloop_thread_state[thread_id].num_req);

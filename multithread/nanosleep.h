@@ -6,7 +6,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#define ITERS 100*1000
+//#define ITERS 100*1000
 
 static inline uint64_t clock_gettime_us(struct timespec* ts1){
 	clock_gettime(CLOCK_REALTIME, ts1);

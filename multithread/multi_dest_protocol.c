@@ -49,51 +49,64 @@ rto_timer_event* acquire_multi_dest_header(multi_dest_buffer* buf){
     }
 }
 
-int reclaim_multi_dest_buf(multi_dest_buffer* buf, alt_header* recv_header){
+int reclaim_multi_dest_buf2(multi_dest_buffer* buf, rto_timer_event* event, uint32_t num_conn, uint32_t thread_id){
     if( buf->ack_tail == buf->ack_head && buf->isfull == 0){
         printf("can't pop empty buffer!\n");
         return -1;
     }
     else{
         buf->isfull = 0;
-        printf("buf->ack_tail:%" PRIu32 "\n", buf->ack_tail);
-        uint32_t sent_request_id = buf->send_timer[buf->ack_tail].send_header.request_id;
-        printf("sent_request_id:%" PRIu32 "\n", sent_request_id);
-        if(recv_header->request_id == sent_request_id){            
-            if(!buf->out_of_order_recv){
-                printf("perfect reclaiming\n");
+        uint32_t ack_request_id = buf->send_timer[buf->ack_tail].send_header.request_id;
+        //printf("thread id:%" PRIu32 "recv request_id:%" PRIu32 "send request_id:%" PRIu32 ",ack_tail request_id:%" PRIu32",", thread_id, event->recv_header.request_id, event->send_header.request_id, ack_request_id);
+
+        if(event->recv_header.request_id == ack_request_id){ // event->recv_header.request_id == event->send_header.request_id){            
+            if(buf->out_of_order_recv == 0){
+                //printf("perfect_reclaiming\n");
                 buf->out_of_order_map[buf->ack_tail] = 1;
                 buf->ack_tail = (buf->ack_tail + 1)%buf->buf_size;
             }
-            else{ //there are out_of_order_recv reqs
-                printf("reclaiming with out_of_order_recv\n");
+            else if(buf->out_of_order_recv < 0){
+                printf("incorrect numbers of out_of_order_recv\n");  
+            }
+            else{
+                //printf("out_of_order_map[ack_tail+0]:%" PRIu8 "\n", buf->out_of_order_map[buf->ack_tail]);                                
                 buf->ack_tail = (buf->ack_tail + 1)%buf->buf_size;
-                // catch up til the point that the next not-yet-received req, e.g. 
-                // req 1, 2, 3, 4, 5
-                // last recv req 2 and req 4, recv req 1 now
-                // buf->ack_tail will catch up to req 2 
-                while(buf->out_of_order_map[buf->ack_tail] > 1){               
+                printf("out_of_order_map[ack_tail+1]:%" PRIu8 "\n", buf->out_of_order_map[buf->ack_tail]);
+                printf("out_of_order_map[ack_tail+2]:%" PRIu8 "\n", buf->out_of_order_map[buf->ack_tail+1]);
+                printf("out_of_order_map[ack_tail+3]:%" PRIu8 "\n", buf->out_of_order_map[buf->ack_tail+2]);    
+
+                while(buf->out_of_order_map[buf->ack_tail] > 1){   // == 2             
                     buf->ack_tail = (buf->ack_tail + 1)%buf->buf_size;
                     buf->out_of_order_recv--;
                 }
+                printf("reclaiming_with_out_of_order_recv, out_of_order_recv:%" PRId32 "\n", buf->out_of_order_recv);
             }
-            return 0;
+        }
+        else if(event->recv_header.request_id > ack_request_id){ // event->recv_header.request_id == event->send_header.request_id){
+            // early-arrived requestse 
+            // because request_id are assigned in send-loop and round-robin on each pseudo-connection
+
+            // uint32_t index_diff = (event->recv_header.request_id - ack_request_id)/num_conn; 
+            // uint32_t index = (buf->ack_tail + index_diff)%buf->buf_size;                         
+            // buf->out_of_order_map[index] = 2;
+            // buf->out_of_order_recv++;
+
+            buf->out_of_order_map[buf->ack_tail] = 1;
+            buf->ack_tail = (buf->ack_tail + 1)%buf->buf_size;
+
+            //printf("in_front_of_tail requests, out_of_order_recv:%" PRId32 "\n", buf->out_of_order_recv);
+        }
+        else if(event->recv_header.request_id < ack_request_id){ // event->recv_header.request_id == event->send_header.request_id){ 
+            // late-arrived requests -> drop them
+            //buf->out_of_order_map[buf->ack_tail] = 3;
+            //printf("behind_tail requests\n");
         }
         else{
-            // TODO: duplicated response? 
-            // DONE: later req arrives eariler
-            // recv_header->request_id > buf->send_header[ack_tail].request_id
-            uint32_t index_diff = recv_header->request_id - sent_request_id;
-            printf("out of order recv\n");
-            printf("recv_header->request_id:%" PRIu32 ", sent_request_id:%" PRIu32"\n", recv_header->request_id, sent_request_id);
-            if(index_diff > 0){
-                uint32_t index = (buf->ack_tail+index_diff)%buf->buf_size;
-                buf->out_of_order_map[index] = 2;
-                buf->out_of_order_recv++;
-            }
-            return 1;
-        }       
-    }        
+            printf("unknown error\n");
+            // this shouldn't happen I guess?
+        }
+
+    }
 }
 
 void free_multi_dest_buf(multi_dest_buffer* buf){
@@ -112,7 +125,7 @@ int init_timer_wheel(simple_timer_wheel* tm_wheel, uint32_t wheel_size){
 
     tm_wheel->current_tick = 0;
     tm_wheel->processed_index = 0;
-    clock_gettime(CLOCK_REALTIME, &tm_wheel->last_access_time);
+    //clock_gettime(CLOCK_REALTIME, &tm_wheel->last_access_time);
     tm_wheel->wheel_tick_size = wheel_size;
     for(uint32_t tick = 0; tick < wheel_size; tick++){
         tm_wheel->wheel[tick].tick = tick;
@@ -143,7 +156,7 @@ void processing_closedloop_timer_wheel(simple_timer_wheel* tm_wheel){
     tm_wheel->wheel[tm_wheel->processed_index].event_head = NULL;
 }
 
-void processing_openloop_timer_wheel(simple_timer_wheel* tm_wheel, multi_dest_buffer* buf){
+void processing_openloop_timer_wheel(simple_timer_wheel* tm_wheel, udp_pseudo_connection* conn_list, uint32_t num_conn, uint32_t thread_id){
     // use monotonically incresing ticks instead of wrap-around index 
     // e.g. received_index = 485, schedule_index/current_index = 20
     // use index can cause this to be time-out
@@ -151,20 +164,80 @@ void processing_openloop_timer_wheel(simple_timer_wheel* tm_wheel, multi_dest_bu
     // schedule_tick/current_tick 520 > received index/tick 485
     // so there shouldn't be a timeout if we use ticks    
     rto_timer_event* event = tm_wheel->wheel[tm_wheel->processed_index].event_head;
+    uint32_t conn_index = event->conn_index;
 
-    // 1. proceess event_head
-    printf("recv tick:%" PRIu64 ",", event->received_tick);
-    printf("schd tick:%" PRIu64 ",", tm_wheel->wheel[tm_wheel->processed_index].tick);
-    if(event->received_tick <= tm_wheel->wheel[tm_wheel->processed_index].tick){
-        printf("event finished within rto_interval\n");
-        printf("recv request_id:%" PRIu32 "\n", event->recv_header.request_id);
-        reclaim_multi_dest_buf(buf, &event->recv_header);
+    //printf("recv tick:%" PRIu64 ", schd tick:%" PRIu64 ", conn_index:%" PRIu32 ",", event->received_tick, tm_wheel->wheel[tm_wheel->processed_index].tick, conn_index);
+
+    //printf("schd tick:%" PRIu64 ",", tm_wheel->wheel[tm_wheel->processed_index].tick);
+
+    if(event->received_tick < UINTMAX_MAX){
+        // 1. proceess event_head
+        if(event->received_tick <= tm_wheel->wheel[tm_wheel->processed_index].tick){
+            //printf("event finished within rto_interval\n");
+            if(event->recv_header.request_id != event->send_header.request_id){
+                printf("unmatched id! in processing_openloop_timer_wheel,");
+                printf("thread id:%" PRIu32 ",recv request_id:%" PRIu32 ",send request_id:%" PRIu32 "\n", thread_id, event->recv_header.request_id, event->send_header.request_id);
+                //conn_list[event->conn_index].pending_req--;
+                //conn_list[event->conn_index].rto_buffer[conn_list[event->conn_index].rto_counter] = event;
+                //conn_list[event->conn_index].rto_counter++;  
+            }
+            else{
+                //conn_list[event->conn_index].pending_req--;
+                reclaim_multi_dest_buf2(&conn_list[conn_index].buffer, event, num_conn, thread_id);  
+            }
+        }
+        else{ // [TEMP] for testing 
+            //printf("timeout in processing_openloop_timer_wheel,");
+            //printf("thread id:%" PRIu32 ",recv request_id:%" PRIu32 ",send request_id:%" PRIu32 "\n", thread_id, event->recv_header.request_id, event->send_header.request_id);
+            reclaim_multi_dest_buf2(&conn_list[conn_index].buffer, event, num_conn, thread_id);
+            //conn_list[event->conn_index].pending_req--;
+            //conn_list[event->conn_index].rto_buffer[conn_list[event->conn_index].rto_counter] = event;
+            //conn_list[event->conn_index].rto_counter++;          
+        }
+    }
+    else{
+        // [TEMP] to run the whole program!
+        event->recv_header.request_id = event->send_header.request_id;
+        //printf("no_recv_then_RTO, thread id:%" PRIu32 ",recv request_id:%" PRIu32 ",send request_id:%" PRIu32 "\n", thread_id, event->recv_header.request_id, event->send_header.request_id);
+        reclaim_multi_dest_buf2(&conn_list[conn_index].buffer, event, num_conn, thread_id);
+        //conn_list[event->conn_index].rto_buffer[conn_list[event->conn_index].rto_counter] = event;
+        //conn_list[event->conn_index].rto_counter++; 
     }
     //else case: timeout requests
         // we don't do anything here, 
         // their value in buf->out_of_order_map will be 0 representing sent
         // but not received yet
-    
+
+    while(event->next_event !=  NULL){ //walk the linked-list of timers
+        event = event->next_event;
+        // the if code copied here!
+        if(event->received_tick < UINTMAX_MAX){
+            reclaim_multi_dest_buf2(&conn_list[conn_index].buffer, event, num_conn, thread_id);
+        }
+        else{
+            event->recv_header.request_id = event->send_header.request_id;
+            reclaim_multi_dest_buf2(&conn_list[conn_index].buffer, event, num_conn, thread_id);
+            //conn_list[event->conn_index].rto_buffer[conn_list[event->conn_index].rto_counter] = event;
+            //conn_list[event->conn_index].rto_counter++;
+        }
+    }
+
+    //     printf("recv tick:%" PRIu64 ",", event->received_tick);
+    //     printf("schd tick:%" PRIu64 ",", tm_wheel->wheel[tm_wheel->processed_index].tick);
+
+    //     if(event->received_tick <= tm_wheel->wheel[tm_wheel->processed_index].tick){
+    //         conn_list[event->conn_index].pending_req--;
+    //         reclaim_multi_dest_buf(buf, event, thread_id);
+    //     }
+    //     else{
+    //         printf("RTO! in processing_openloop_timer_wheel,");
+    //         printf("thread_id%" PRIu32 ", sent request_id:%" PRIu32 "\n", thread_id, event->send_header.request_id);
+    //         conn_list[event->conn_index].pending_req--;
+    //         buf->rto_buffer[buf->rto_counter] = event;
+    //         buf->rto_counter++;
+    //     }
+    // }
+
     // clear the timer slot before return  
     tm_wheel->wheel[tm_wheel->processed_index].event_head = NULL;
 }
@@ -200,6 +273,61 @@ void schedule_event_timer_wheel(simple_timer_wheel* tm_wheel, rto_timer_event* e
     // printf("rto_timer_event:%p\n", event);
     // printf("tm_wheel->wheel[scheduled_index].event_head:%p\n", tm_wheel->wheel[scheduled_index].event_head);
 }
+
+
+// int reclaim_multi_dest_buf(multi_dest_buffer* buf, rto_timer_event* event, uint32_t thread_id){
+//     if( buf->ack_tail == buf->ack_head && buf->isfull == 0){
+//         printf("can't pop empty buffer!\n");
+//         return -1;
+//     }
+//     else{
+//         buf->isfull = 0;
+//         //printf("buf->ack_tail:%" PRIu32 "\n", buf->ack_tail);
+//         uint32_t ack_request_id = buf->send_timer[buf->ack_tail].send_header.request_id;
+
+//         //printf("thread id:%" PRIu32 ",recv request_id:%" PRIu32 ",send request_id:%" PRIu32 ",ack_tail request_id:%" PRIu32",", thread_id, event->recv_header.request_id, event->send_header.request_id, ack_request_id);
+
+//         //printf("sent_request_id:%" PRIu32 "\n", sent_request_id);
+//         if(event->recv_header.request_id == ack_request_id){
+//             if(!buf->out_of_order_recv){
+//                 printf("perfect_reclaiming\n");
+//                 buf->out_of_order_map[buf->ack_tail] = 1;
+//                 buf->ack_tail = (buf->ack_tail + 1)%buf->buf_size;
+//             }
+//             else{ //there are out_of_order_recv reqs
+//                 printf("reclaiming_with_out_of_order_recv\n");
+//                 buf->ack_tail = (buf->ack_tail + 1)%buf->buf_size;
+//                 // catch up til the point that the next not-yet-received req, e.g. 
+//                 // req 1, 2, 3, 4, 5
+//                 // last recv req 2 and req 4, recv req 1 now
+//                 // buf->ack_tail will catch up to req 2 
+//                 while(buf->out_of_order_map[buf->ack_tail] > 1){               
+//                     buf->ack_tail = (buf->ack_tail + 1)%buf->buf_size;
+//                     buf->out_of_order_recv--;
+//                 }
+//             }
+//             return 0;
+//         }
+//         else{
+//             // TODO: duplicated response? 
+//             // -> yes, e.g. recv req 0 again after req 64
+//             // DONE: later req arrives eariler
+//             // recv_header->request_id > buf->send_header[ack_tail].request_id
+//             int32_t index_diff = (int32_t)event->recv_header.request_id - (int32_t) ack_request_id;            
+//             if(index_diff > 0){
+//                 printf("out_of_order_recv, early arrived\n");
+//                 uint32_t index = (buf->ack_tail + (uint32_t) index_diff)%buf->buf_size;
+//                 buf->out_of_order_map[index] = 2;
+//                 buf->out_of_order_recv++;
+//                 //buf->ack_tail = (buf->ack_tail + 1)%buf->buf_size;
+//             }
+//             else{ //index_diff < 0
+//                 printf("out_of_order_recv, late arrived\n");
+//             }            
+//             return 1;
+//         }       
+//     }        
+// }
 
 
 // void process_preslot_timer_wheel(simple_timer_wheel* tm_wheel, multi_dest_buffer* buf){

@@ -17,12 +17,12 @@
 #include "nanosleep.h"
 #define ITERS 20
 
-typedef struct {
-    uint32_t tid;
-    int fd;
-    struct sockaddr_in server_addr;
-    multi_dest_buffer* buf;
-} udp_pseudo_connection;
+// typedef struct {
+//     uint32_t tid;
+//     int fd;
+//     struct sockaddr_in server_addr;
+//     multi_dest_buffer* buf;
+// } udp_pseudo_connection;
 
 typedef struct { //per thread state
     uint32_t tid;

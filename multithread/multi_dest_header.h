@@ -9,6 +9,7 @@ struct __attribute__((__packed__)) alt_header {
   in_port_t dst_port;
   in_addr_t alt_dst_ip;
   in_addr_t alt_dst_ip2;
+  in_addr_t alt_dst_ip3;
 };
 typedef struct alt_header alt_header;
 

@@ -218,8 +218,11 @@ int main(int argc, char *argv[]) {
 
     // fdreq_tracking_array tracks the number of reqs in a socket every time a epoll_wait call returns    
     int* fdreq_tracking_array;
+    int* ready_fd_array;
     int fd_index_diff; // the fd of these sockets starts at 4, usually so the diff is 4
     fdreq_tracking_array = (int *) malloc(expected_connections * sizeof(int) );
+    ready_fd_array = (int *) malloc(expected_connections * sizeof(int) );
+    //exit(1);
 
     struct sockaddr_in* server_addr_array;
     server_addr_array = (struct sockaddr_in *) malloc( expected_connections * sizeof(struct sockaddr_in) );
@@ -326,124 +329,107 @@ int main(int argc, char *argv[]) {
             exit(1);
         }
 
-        //if (num_events > 0) {
-            //printf("num_events:%d\n", num_events);
-            //fprintf(output_fptr,"%d\n", num_events);
-            //pkt_counter = pkt_counter + (uint64_t) num_events;
-            //fprintf(output_fptr,"%ld\n", pkt_counter);
-        //printf("fd:");
+        memset(ready_fd_array, 0, sizeof(int));
         for (int j = 0; j < num_events; j++){
             struct epoll_event *e = epstate.events+j;
-            //printf("%d,", e->data.fd);
-            int drained_flag = 0;
-            int req_perloop_counter = 0;
-            while(!drained_flag){
-                ssize_t numBytes = 0;
-                ssize_t recv_byte_perloop = 0;
-                ssize_t send_byte_perloop = 0;
-                int recv_retries = 0; 
-                int send_retries = 0;                    
-                while(recv_byte_perloop < sizeof(alt_header)){
-                    //numBytes = recvfrom(udp_socket_array[sock_index], (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
-                    numBytes = recvfrom(e->data.fd, (void*)&alt_recv_header, sizeof(alt_header), MSG_DONTWAIT, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
-                    //numBytes = recv(e->data.fd, recv_buffer, 20, MSG_DONTWAIT);
-                    if (numBytes < 0){
-                        if((errno == EAGAIN) || (errno == EWOULDBLOCK)){ 
-                            recv_retries++;   
-                            if(recv_retries == max_retries){
-                                drained_flag = 1;
-                                //send_byte_perloop = sizeof(alt_header); //force it not entering send-loop
+            int index = e->data.fd - fd_index_diff;
+            ready_fd_array[index] = 1;
+        }
+
+        int num_empty_fd = 0;
+        int runningRoundRobin = 1;
+        while(num_empty_fd < num_events){
+            for (int j = 0; j < num_events; j++){
+                struct epoll_event *e = epstate.events+j;
+                int index = e->data.fd - fd_index_diff;
+                //printf("%d,", e->data.fd);
+                if(ready_fd_array[index] == 1){
+                    ssize_t numBytes = 0;
+                    ssize_t recv_byte_perloop = 0;
+                    ssize_t send_byte_perloop = 0;
+                    int recv_retries = 0; 
+                    int send_retries = 0;                    
+                    while(recv_byte_perloop < sizeof(alt_header)){
+                        //numBytes = recvfrom(udp_socket_array[sock_index], (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
+                        numBytes = recvfrom(e->data.fd, (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
+                        //numBytes = recv(e->data.fd, recv_buffer, 20, MSG_DONTWAIT);
+                        if (numBytes < 0){
+                            if((errno == EAGAIN) || (errno == EWOULDBLOCK)){ 
+                                recv_retries++;   
+                                if(recv_retries == max_retries){
+                                    ready_fd_array[index] = 0;
+                                    send_byte_perloop = sizeof(alt_header); //force it not entering send-loop
+                                    break;
+                                }                        
+                                continue; 
+                            }
+                            else{
+                                printf("recvfrom failed on fd:%d\n", e->data.fd); 
+                                send_byte_perloop = sizeof(alt_header);
                                 break;
-                            }                        
-                            continue; 
+                            }
                         }
-                        else{
-                            printf("recvfrom failed on fd:%d\n", e->data.fd); 
-                            send_byte_perloop = sizeof(alt_header);
-                            break;
-                        }
-                    }
-                    else if (numBytes == 0){ //&& recv_byte_perloop == 20){
-                        if(recv_byte_perloop == sizeof(alt_header)){
-                            break;
-                        }
-                        else{
-                            recv_retries++;
-                            printf("recv 0 byte on fd:%d\n", e->data.fd);
-                            if(recv_retries == max_retries){
-                                send_byte_perloop = sizeof(alt_header); //force it not entering send-loop
+                        else if (numBytes == 0){ //&& recv_byte_perloop == 20){
+                            if(recv_byte_perloop == sizeof(alt_header)){
                                 break;
                             }
                             else{
-                                continue;
+                                recv_retries++;
+                                printf("recv 0 byte on fd:%d\n", e->data.fd);
+                                if(recv_retries == max_retries){
+                                    send_byte_perloop = sizeof(alt_header); //force it not entering send-loop
+                                    break;
+                                }
+                                else{
+                                    continue;
+                                }
                             }
                         }
-                    }
-                    else{
-                        recv_byte_perloop = recv_byte_perloop + numBytes;
-                        total_recv_bytes = total_recv_bytes + numBytes;
-                        //printf("recv:%zd on fd %d\n", numBytes, e->data.fd);
-                    }
-                }                
-
-                if(drained_flag){
-                    //if(req_perloop_counter > 1)
-                        //printf("fd: %d, drained after %d reqs\n", e->data.fd, req_perloop_counter);
-                    break;
-                }
-                /*else{
-                    printf("recv_reqid:%" PRIu32 "\n", alt_recv_header.request_id);
-                }*/
-                //printf("recv_reqid:%" PRIu32 "\n", alt_recv_header.request_id);
-
-                //TESTING DROP!
-                // if(alt_recv_header.request_id == 310 && drop_once_req310 == 0){
-                //     drop_once_req310 = 1;
-                //     break;
-                // }                    
-
-                // if(alt_recv_header.request_id == 510 && drop_once_req510 == 0){
-                //     drop_once_req510 = 1;
-                //     break;
-                // }
+                        else{
+                            recv_byte_perloop = recv_byte_perloop + numBytes;
+                            total_recv_bytes = total_recv_bytes + numBytes;
+                            //printf("recv:%zd on fd %d\n", numBytes, e->data.fd);
+                        }
+                    }      
 
                     //clock_gettime(CLOCK_REALTIME, &ts1);
                     //sleep_ts1=ts1;
                     //realnanosleep(10*1000, &sleep_ts1, &sleep_ts2); // processing time 10 us
 
-                while(send_byte_perloop < sizeof(alt_header)){
-                    //numBytes = send(e->data.fd, send_buffer, 20, MSG_DONTWAIT);
-                    //alt_send_header.alt_dst_ip = server_addr_array[0].sin_addr.s_addr;
-                    ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));                    
-                    //ssize_t numBytes = sendto(udp_socket_array[sock_index], (void*) &alt_send_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
-                    if (numBytes < 0){
-                        if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
-                            printf("sendto EAGAIN on fd:%d\n", e->data.fd);
-                            //fprintf(output_fptr,"sendto EAGAIN on fd:%d\n", e->data.fd);
-                            continue;
+                    while(send_byte_perloop < sizeof(alt_header)){
+                        //numBytes = send(e->data.fd, send_buffer, 20, MSG_DONTWAIT);
+                        //alt_send_header.alt_dst_ip = server_addr_array[0].sin_addr.s_addr;
+                        ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));                    
+                        //ssize_t numBytes = sendto(udp_socket_array[sock_index], (void*) &alt_send_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
+                        if (numBytes < 0){
+                            if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
+                                printf("sendto EAGAIN on fd:%d\n", e->data.fd);
+                                //fprintf(output_fptr,"sendto EAGAIN on fd:%d\n", e->data.fd);
+                                continue;
+                            }
+                            else{
+                                printf("sendto failed on fd:%d\n", e->data.fd); 
+                                //exit(1);
+                                break;
+                            }
+                        }
+                        else if (numBytes == 0 ){
+                            if(send_byte_perloop == 20){
+                                break;
+                            }
                         }
                         else{
-                            printf("sendto failed on fd:%d\n", e->data.fd); 
-                            //exit(1);
-                            break;
+                            send_byte_perloop = send_byte_perloop + numBytes;
+                            total_send_bytes = total_send_bytes + numBytes;
+                            //printf("send:%zd on fd %d\n", numBytes, e->data.fd);                
                         }
                     }
-                    else if (numBytes == 0 ){
-                        if(send_byte_perloop == 20){
-                            break;
-                        }
-                    }
-                    else{
-                        send_byte_perloop = send_byte_perloop + numBytes;
-                        total_send_bytes = total_send_bytes + numBytes;
-                        //printf("send:%zd on fd %d\n", numBytes, e->data.fd);                
-                    }
+                    fdreq_tracking_array[e->data.fd - fd_index_diff]+=1;
                 }
-
-                req_perloop_counter++;
+                else{
+                    num_empty_fd++;
+                }
             }
-            //TODO: update req-fd counter here
-            fdreq_tracking_array[e->data.fd - fd_index_diff] = req_perloop_counter;
         }
         //printf("\n");
         //printf("recv:%zd, send:%zd\n", total_recv_bytes, total_send_bytes);

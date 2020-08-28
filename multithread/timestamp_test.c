@@ -5,19 +5,20 @@
 #include <inttypes.h>
 #include "timestamping.h"
 #include "nanosleep.h"
+#include "multi_dest_header.h"
 
 #define HARDWARE_TIMESTAMPING_ENABLE 1
 #define NUM_REQS 1000*100
 
-typedef struct __attribute__((__packed__)) {
-  uint16_t service_id;    // Type of Service.
-  uint16_t request_id;    // Request identifier.
-  uint16_t packet_id;     // Packet identifier.
-  uint16_t options;       // Options (could be request length etc.).
-  in_addr_t alt_dst_ip1;
-  in_addr_t alt_dst_ip2;
-  //in_addr_t alt_dst_ip3;
-} alt_header;
+// typedef struct __attribute__((__packed__)) {
+//   uint16_t service_id;    // Type of Service.
+//   uint16_t request_id;    // Request identifier.
+//   uint16_t packet_id;     // Packet identifier.
+//   uint16_t options;       // Options (could be request length etc.).
+//   in_addr_t alt_dst_ip1;
+//   in_addr_t alt_dst_ip2;
+//   in_addr_t alt_dst_ip3;
+// } alt_header;
 
 typedef struct txrx_timespec{
     struct timespec send_ts;
@@ -116,7 +117,7 @@ int main(int argc, char *argv[]) {
     Alt.request_id = 0;
     Alt.packet_id = 0;
     Alt.options = 10;
-    Alt.alt_dst_ip1 = inet_addr(destIP);
+    Alt.alt_dst_ip = inet_addr(destIP);
     //printf("sizeif Alt: %ld\n", sizeof(Alt));
     alt_header recv_alt;
 

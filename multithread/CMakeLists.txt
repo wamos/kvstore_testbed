@@ -14,7 +14,7 @@ set(MEMORY_LEAK_CHECK_FLAGS "-fsanitize=address -fno-omit-frame-pointer") #-fno-
 #we can use gnu11 not c11 so POSIX and other extensions to standard C are visible by default
 #ref: https://stackoverflow.com/questions/3875197/gcc-with-std-c99-complains-about-not-knowing-struct-timespec
 #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -std=gnu11 -pthread -g -lrt")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -std=c11 -pthread -g -lrt")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -std=c11 -pthread -g -lrt")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${WARNING_FLAGS}")
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -std=c++11 -g")
@@ -46,7 +46,18 @@ add_executable(timestamp_test timestamp_test.c timestamping.c)
 add_executable(udp_timestamped_server udp_timestamped_server.c timestamping.c)
 set_target_properties(udp_timestamped_server PROPERTIES C_STANDARD 11)
 
-add_executable(multidest_test multidest_test.c) 
+add_executable(multidest_test multidest_test.c multi_dest_protocol.c) 
+add_executable(timerwheel_client timerwheel_closedloop_client.c multi_dest_protocol.c)
+add_executable(timerwheel_openloop_client timerwheel_openloop_client.c multi_dest_protocol.c)
+target_link_libraries(timerwheel_openloop_client PRIVATE cpp_dist)
+target_link_libraries(timerwheel_openloop_client PRIVATE m)
+
+add_executable(timerwheel_baseline_client timerwheel_baseline_client.c multi_dest_protocol.c)
+target_link_libraries(timerwheel_baseline_client PRIVATE cpp_dist)
+target_link_libraries(timerwheel_baseline_client PRIVATE m)
+
+add_executable(timerwheel_server timerwheel_server.c)
+add_executable(timerwheel_roundrobin_server timerwheel_roundrobin_server.c)
 
 add_executable(dist_test dist_test.c)
 target_link_libraries(dist_test PRIVATE cpp_dist )
