@@ -289,7 +289,6 @@ int main(int argc, char *argv[]) {
 
     alt_send_header.service_id = 1;
     alt_send_header.request_id = 0;
-    alt_send_header.packet_id = 0;
     alt_send_header.options = 10;    
 
     for(int server_index = 0; server_index < expected_connections; server_index++){

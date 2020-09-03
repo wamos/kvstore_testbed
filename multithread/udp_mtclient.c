@@ -506,7 +506,6 @@ int main(int argc, char *argv[]) {
             memset(&openloop_thread_state[thread_id].conn_list[conn_index].send_header, 0, sizeof(alt_header));
             openloop_thread_state[thread_id].conn_list[conn_index].send_header.service_id = 1;
             openloop_thread_state[thread_id].conn_list[conn_index].send_header.request_id = 0;
-            openloop_thread_state[thread_id].conn_list[conn_index].send_header.packet_id = 0;
             openloop_thread_state[thread_id].conn_list[conn_index].send_header.options = 10;
             openloop_thread_state[thread_id].conn_list[conn_index].send_header.alt_dst_ip = inet_addr(recv_ip_addr);
             openloop_thread_state[thread_id].conn_list[conn_index].send_header.alt_dst_ip2 = inet_addr(recv_ip_addr2);
@@ -543,7 +542,6 @@ int main(int argc, char *argv[]) {
 
         closedloop_thread_state[thread_id].send_header.service_id = 1;
         closedloop_thread_state[thread_id].send_header.request_id = 0;
-        closedloop_thread_state[thread_id].send_header.packet_id = 0;
         closedloop_thread_state[thread_id].send_header.options = 10;
         closedloop_thread_state[thread_id].send_header.alt_dst_ip = inet_addr(recv_ip_addr);
         closedloop_thread_state[thread_id].send_header.alt_dst_ip2 = inet_addr(recv_ip_addr2);

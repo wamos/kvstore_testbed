@@ -90,7 +90,6 @@ int main(int argc, char *argv[]) {
     alt_header Alt;    
     Alt.service_id = 1;
     Alt.request_id = 0;
-    Alt.packet_id = 0;
     Alt.options = 10;
     Alt.alt_dst_ip1 = inet_addr(destIP);
     //printf("sizeif Alt: %ld\n", sizeof(Alt));
@@ -117,7 +116,6 @@ int main(int argc, char *argv[]) {
             }
         }
         Alt.request_id = Alt.request_id + 1;
-        Alt.packet_id = Alt.packet_id + 1;
         
         ssize_t recv_bytes = 0;
         while(recv_bytes < sizeof(alt_header)){

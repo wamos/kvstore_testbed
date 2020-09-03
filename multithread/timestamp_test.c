@@ -48,10 +48,12 @@ int main(int argc, char *argv[]) {
 
     char* interface_name = "enp59s0";
 	char* routerIP = argv[1];     // 1st arg: BESS IP address (dotted quad)
-    char* destIP = argv[2];     // 2nd arg: alt dest ip addr;
-    in_port_t recvPort = (argc > 2) ? atoi(argv[3]) : 6379;
-    //int is_direct_to_server = (argc > 3) ? atoi(argv[4]) : 1;
-    char* expname = (argc > 3) ? argv[4] : "timestamp_test";
+    char* destIP = "10.0.0.5";    
+    char* destIP2 = "10.0.0.8"; 
+    char* destIP3 = "10.0.0.9";
+    in_port_t recvPort = (argc > 2) ? atoi(argv[2]) : 6379;
+    int is_direct_to_server = (argc > 3) ? atoi(argv[3]) : 1;
+    char* expname = (argc > 4) ? argv[4] : "timestamp_test";
     //const char filename_prefix[] = "/home/shw328/kvstore/log/";
     const char filename_prefix[] = "/tmp/";
     const char log[] = ".log";
@@ -90,12 +92,12 @@ int main(int argc, char *argv[]) {
     #endif
 
   	// Construct the server address structure
-	// struct sockaddr_in routerAddr;            // Server address
-	// memset(&routerAddr, 0, sizeof(routerAddr)); // Zero out structure
-  	// routerAddr.sin_family = AF_INET;          // IPv4 address family
-    // routerAddr.sin_port = htons(recvPort);    // Server port
-    // routerAddr.sin_addr.s_addr = inet_addr(routerIP); // an incoming interface
-    // int routerAddrLen = sizeof(routerAddr);
+	struct sockaddr_in routerAddr;            // Server address
+	memset(&routerAddr, 0, sizeof(routerAddr)); // Zero out structure
+  	routerAddr.sin_family = AF_INET;          // IPv4 address family
+    routerAddr.sin_port = htons(recvPort);    // Server port
+    routerAddr.sin_addr.s_addr = inet_addr(routerIP); // an incoming interface
+    int routerAddrLen = sizeof(routerAddr);
 
     struct sockaddr_in servAddr;                  // Local address
 	memset(&servAddr, 0, sizeof(servAddr));       // Zero out structure
@@ -113,11 +115,13 @@ int main(int argc, char *argv[]) {
     //txrx_timespec system_timestamp_array[NUM_REQS]={0};
     //our alt header
     alt_header Alt;    
-    Alt.service_id = 1;
+    //Alt.service_id = 1; // pass through request
+    Alt.service_id = 11; // selection request
     Alt.request_id = 0;
-    Alt.packet_id = 0;
     Alt.options = 10;
-    Alt.alt_dst_ip = inet_addr(destIP);
+    //Alt.alt_dst_ip = inet_addr(destIP);
+    //Alt.alt_dst_ip2 = inet_addr(destIP2);
+    //Alt.alt_dst_ip3 = inet_addr(destIP3);
     //printf("sizeif Alt: %ld\n", sizeof(Alt));
     alt_header recv_alt;
 
@@ -143,8 +147,14 @@ int main(int argc, char *argv[]) {
     tx_iovec.iov_len = sizeof(alt_header);
 
     struct msghdr tx_hdr = {0};
-    tx_hdr.msg_name = (void*) &servAddr;
-    tx_hdr.msg_namelen =  (socklen_t) servAddrLen;
+    if(is_direct_to_server == 1){
+        tx_hdr.msg_name = (void*) &servAddr;
+        tx_hdr.msg_namelen =  (socklen_t) servAddrLen;
+    }
+    else{
+        tx_hdr.msg_name = (void*) &routerAddr;
+        tx_hdr.msg_namelen =  (socklen_t) routerAddrLen;
+    }
     tx_hdr.msg_iov = &tx_iovec;
     tx_hdr.msg_iovlen = 1;
 
@@ -162,16 +172,66 @@ int main(int argc, char *argv[]) {
 	rx_hdr.msg_controllen = CONTROL_LEN;
     #endif
 
+    //seed the rand() function
+    srand(1); 
+
+    int replica_0 = 0;
+    int replica_1 = 0;
+    int replica_2 = 0;
+
 	//clock_gettime(CLOCK_REALTIME, &starttime_spec);
     ssize_t numBytes = 0;
     uint32_t last_optid=0;
     int outoforder_timestamp = 0;
-	for(int iter = 0; iter < NUM_REQS; iter++){
+	for(int iter = 0; iter < 3*NUM_REQS; iter++){ // for 3 replicas
 		//api ref: ssize_t send(int sockfd, const void *buf, size_t len, int flags);
         clock_gettime(CLOCK_REALTIME, &ts1);
         ssize_t send_bytes = 0;
         while(send_bytes < sizeof(alt_header)){
             #ifdef HARDWARE_TIMESTAMPING_ENABLE
+            int replica_num = rand()%3;
+            if(replica_num == 0){
+                // if(is_direct_to_server == 1){
+                //     servAddr.sin_addr.s_addr = inet_addr(destIP);
+                // }
+                // else{
+                servAddr.sin_addr.s_addr = inet_addr(destIP);
+                //printf("alt_dst_ip:%s\n", destIP);
+                Alt.alt_dst_ip = inet_addr(destIP);
+                Alt.alt_dst_ip2 = inet_addr(destIP2);
+                Alt.alt_dst_ip3 = inet_addr(destIP3);
+                //}
+                replica_0++;
+            }
+            else if(replica_num == 1){
+                // if(is_direct_to_server == 1){
+                //     servAddr.sin_addr.s_addr = inet_addr(destIP2);
+                // }
+                // else{
+                servAddr.sin_addr.s_addr = inet_addr(destIP2);
+                //printf("alt_dst_ip:%s\n", destIP2);
+                Alt.alt_dst_ip = inet_addr(destIP2);
+                Alt.alt_dst_ip2 = inet_addr(destIP3);
+                Alt.alt_dst_ip3 = inet_addr(destIP); 
+                //}
+                replica_1++;               
+            }
+            else{
+                //if(is_direct_to_server == 1){
+                //     servAddr.sin_addr.s_addr = inet_addr(destIP3);
+                // }
+                // else{
+                servAddr.sin_addr.s_addr = inet_addr(destIP3);
+                //printf("alt_dst_ip:%s\n", destIP3);
+                Alt.alt_dst_ip = inet_addr(destIP3);
+                Alt.alt_dst_ip2 = inet_addr(destIP);
+                Alt.alt_dst_ip3 = inet_addr(destIP2);
+                //}
+                replica_2++;
+            }
+            //tx_iovec.iov_base = (void*) &Alt;
+            //tx_hdr.msg_iov = &tx_iovec;
+
             numBytes= sendmsg(send_sock, &tx_hdr, 0);
             #else
             numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &servAddr, (socklen_t) servAddrLen); 
@@ -187,9 +247,9 @@ int main(int argc, char *argv[]) {
             }
         }
         Alt.request_id = Alt.request_id + 1;
-        Alt.packet_id = Alt.packet_id + 1;
         
         ssize_t recv_bytes = 0;
+
         while(recv_bytes < sizeof(alt_header)){
             #ifdef HARDWARE_TIMESTAMPING_ENABLE
             numBytes = recvmsg(send_sock, &rx_hdr, 0);
@@ -237,9 +297,9 @@ int main(int argc, char *argv[]) {
         }
         if(print_tx_counter)
             printf("\n");
-        //hardware_timestamp_array[send_info.optid].send_ts = send_info.time;
+        // //hardware_timestamp_array[send_info.optid].send_ts = send_info.time;
 
-        //TODO: solbve the reordering issue with tx_timestamps?
+        //solve the reordering issue with tx_timestamps here
         if(send_info.optid <= last_optid && send_info.optid!=0){
             printf("out-of-order based on optid\n");
             printf("send_info.optid:%u, last_optid:%u\n",send_info.optid,last_optid);
@@ -294,6 +354,10 @@ int main(int argc, char *argv[]) {
         fprintf(fp, "%" PRIu64 "\n", req_rtt);
         #endif           
 	}
+
+    printf("replica 0:%d,", replica_0);
+    printf("replica 1:%d,", replica_1);
+    printf("replica 2:%d\n", replica_2);
 
     /*for(int index = 0; index < NUM_REQS; index++){
         uint64_t network_rtt = clock_gettime_diff_ns(&hardware_timestamp_array[index].recv_ts, &hardware_timestamp_array[index].send_ts);
