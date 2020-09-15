@@ -129,9 +129,9 @@ int main(int argc, char *argv[]) {
     queued_events = 0;
 
     char* interface_name = "eth1";
-    if(enable_nic_timestamping(interface_name) < 0){
+    /*if(enable_nic_timestamping(interface_name) < 0){
         printf("NIC timestamping can't be enabled\n");
-    }
+    }*/
 
     ssize_t numBytesRcvd;
     ssize_t numBytesSend;

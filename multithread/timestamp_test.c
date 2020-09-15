@@ -82,9 +82,9 @@ int main(int argc, char *argv[]) {
     struct timestamp_info send_info = {send_ts, opt_id};
     struct timestamp_info recv_info = {recv_ts, opt_id};
 
-    if(enable_nic_timestamping(interface_name) < 0){
+    /*if(enable_nic_timestamping(interface_name) < 0){
         printf("NIC timestamping can't be enabled\n");
-    }
+    }*/
 
     if(sock_enable_timestamping(send_sock) < 0){
        printf("socket %d timestamping can't be enabled\n", send_sock); 
