@@ -18,6 +18,7 @@
 #include "epoll_state.h"
 #include "multi_dest_header.h"
 
+//#define HARDWARE_TIMESTAMPING_ENABLE 1
 static const int MAXPENDING = 20; // Maximum outstanding connection requests
 static const int SERVER_BUFSIZE = 1024*16;
 int closed_loop_done;
@@ -128,10 +129,12 @@ int main(int argc, char *argv[]) {
     closed_loop_done = 0;
     queued_events = 0;
 
+    #ifdef HARDWARE_TIMESTAMPING_ENABLE
     char* interface_name = "eth1";
     /*if(enable_nic_timestamping(interface_name) < 0){
         printf("NIC timestamping can't be enabled\n");
     }*/
+    #endif
 
     ssize_t numBytesRcvd;
     ssize_t numBytesSend;
@@ -198,9 +201,9 @@ int main(int argc, char *argv[]) {
 
     struct sockaddr_in clntAddr;                  // Local address
     memset(&clntAddr, 0, sizeof(clntAddr));       // Zero out structure
-    clntAddr.sin_family = AF_INET;                // IPv4 address family
-    clntAddr.sin_addr.s_addr = inet_addr(clientIP); // an incoming interface
-    clntAddr.sin_port = htons(recv_port_start);          // Local port
+    //clntAddr.sin_family = AF_INET;                // IPv4 address family
+    //clntAddr.sin_addr.s_addr = inet_addr(clientIP); // an incoming interface
+    //clntAddr.sin_port = htons(recv_port_start);          // Local port
     int clntAddrLen = sizeof(clntAddr);
 
     alt_header alt_recv_header;
@@ -241,6 +244,7 @@ int main(int argc, char *argv[]) {
     //fprintf(output_fptr, "file opened!\n");
     //fflush(output_fptr);
 
+    #ifdef HARDWARE_TIMESTAMPING_ENABLE	
     struct iovec tx_iovec;
     tx_iovec.iov_base = (void*) &alt_send_header;
     tx_iovec.iov_len = sizeof(alt_header);
@@ -263,6 +267,7 @@ int main(int argc, char *argv[]) {
     rx_hdr.msg_iovlen = 1;
     rx_hdr.msg_control = recv_control;
 	rx_hdr.msg_controllen = CONTROL_LEN;
+   #endif
 
     uint32_t last_optid = 0;
     int outoforder_timestamp = 0;
@@ -289,7 +294,11 @@ int main(int argc, char *argv[]) {
                 int recv_retries = 0; 
                 int send_retries = 0;                    
                 while(recv_byte_perloop < sizeof(alt_header)){
-                    numBytes = recvmsg(e->data.fd, &rx_hdr, 0);
+		    #ifdef HARDWARE_TIMESTAMPING_ENABLE
+            	    numBytes = recvmsg(e->data.fd, &rx_hdr, 0);
+            	    #else
+		    numBytes = recvfrom(e->data.fd, (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
+            	    #endif 
 
                     if (numBytes < 0){
                         if((errno == EAGAIN) || (errno == EWOULDBLOCK)){                            
@@ -329,7 +338,11 @@ int main(int argc, char *argv[]) {
                 //realnanosleep(10*1000, &sleep_ts1, &sleep_ts2); // processing time 10 us
 
                 while(send_byte_perloop < sizeof(alt_header)){
+	            #ifdef HARDWARE_TIMESTAMPING_ENABLE
                     numBytes= sendmsg(e->data.fd, &tx_hdr, 0);
+		    #else
+		    numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr)); 
+		    #endif
                     if (numBytes < 0){
                         if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
                             printf("sendto EAGAIN on fd:%d\n", e->data.fd);
@@ -369,6 +382,7 @@ int main(int argc, char *argv[]) {
 
             clock_gettime(CLOCK_REALTIME, &ts3);
 
+	    #ifdef HARDWARE_TIMESTAMPING_ENABLE
             // Handle udp_get_rx_timestamp failures
             // we can make it a while loop to get the proper rx_timestamp
             int print_rx_counter = 0;
@@ -399,9 +413,9 @@ int main(int argc, char *argv[]) {
             if(print_tx_counter)
                 printf("\n");
 
+	    uint64_t app_latency = clock_gettime_diff_ns(&ts1, &ts2);
             uint64_t host_latency = clock_gettime_diff_ns(&recv_info.time, &send_info.time);
-            uint64_t app_latency = clock_gettime_diff_ns(&ts1, &ts2);
-            if(host_latency < app_latency){
+	     if(host_latency < app_latency){
                 //fprintf(output_fptr, "%" PRIu64 ",%" PRIu64 "\n", host_latency, app_latency);
                 printf("\n--------------\n host_latency < app_latency \n--------------\n");
                 printf("app_latency:%" PRIu64 "\n", app_latency);
@@ -410,6 +424,11 @@ int main(int argc, char *argv[]) {
             else{
                 fprintf(output_fptr, "%" PRIu64 ",%" PRIu64 "\n", host_latency, app_latency);
             }
+            #endif
+
+            uint64_t app_latency2 = clock_gettime_diff_ns(&ts1, &ts2);
+	    printf("app_latency:%" PRIu64 "\n", app_latency2);
+           
             clock_gettime(CLOCK_REALTIME, &ts4); 
             uint64_t log_latency = clock_gettime_diff_ns(&ts3, &ts4);
             printf("log_latency:%" PRIu64 "\n", log_latency);

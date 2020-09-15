@@ -7,8 +7,8 @@
 #include "nanosleep.h"
 #include "multi_dest_header.h"
 
-#define HARDWARE_TIMESTAMPING_ENABLE 1
-#define NUM_REQS 1000*100
+//#define HARDWARE_TIMESTAMPING_ENABLE 1
+#define NUM_REQS 10 //1000*100
 
 // typedef struct __attribute__((__packed__)) {
 //   uint16_t service_id;    // Type of Service.
@@ -49,8 +49,6 @@ int main(int argc, char *argv[]) {
     char* interface_name = "eth1"; //argv[1];
     //char* routerIP = argv[1];     // 1st arg: BESS IP address (dotted quad)
     char* destIP = argv[1];    
-    //char* destIP2 = "10.0.0.8"; 
-    //char* destIP3 = "10.0.0.9";
     in_port_t recvPort = (argc > 2) ? atoi(argv[2]) : 6379;
     int is_direct_to_server = (argc > 3) ? atoi(argv[3]) : 1;
     char* expname = (argc > 4) ? argv[4] : "timestamp_test";
@@ -192,7 +190,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 send_bytes = send_bytes + numBytes;
-                //printf("send:%zd\n", numBytes);
+                printf("send:%zd\n", numBytes);
             }
         }
         Alt.request_id = Alt.request_id + 1;
@@ -221,7 +219,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 recv_bytes = recv_bytes +  numBytes;
-                //printf("recv:%zd\n", numBytes);
+                printf("recv:%zd\n", numBytes);
             } 
         }
 
@@ -290,6 +288,7 @@ int main(int argc, char *argv[]) {
         } 
         #else
         uint64_t req_rtt = clock_gettime_diff_ns(&ts1, &ts2);
+	printf("req rtt:%" PRIu64 "\n", req_rtt);
         fprintf(fp, "%" PRIu64 "\n", req_rtt);
         #endif           
 	}
