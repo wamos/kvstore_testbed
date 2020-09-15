@@ -380,7 +380,7 @@ int main(int argc, char *argv[]) {
             }
             clock_gettime(CLOCK_REALTIME, &ts2);
 
-            clock_gettime(CLOCK_REALTIME, &ts3);
+            //clock_gettime(CLOCK_REALTIME, &ts3);
 
 	    #ifdef HARDWARE_TIMESTAMPING_ENABLE
             // Handle udp_get_rx_timestamp failures
@@ -427,11 +427,12 @@ int main(int argc, char *argv[]) {
             #endif
 
             uint64_t app_latency2 = clock_gettime_diff_ns(&ts1, &ts2);
-	    printf("app_latency:%" PRIu64 "\n", app_latency2);
-           
-            clock_gettime(CLOCK_REALTIME, &ts4); 
-            uint64_t log_latency = clock_gettime_diff_ns(&ts3, &ts4);
-            printf("log_latency:%" PRIu64 "\n", log_latency);
+	    //printf("app_latency:%" PRIu64 "\n", app_latency2);
+            fprintf(output_fptr, "%" PRIu64 "\n", app_latency2);
+
+            //clock_gettime(CLOCK_REALTIME, &ts4); 
+            //uint64_t log_latency = clock_gettime_diff_ns(&ts3, &ts4);
+            //printf("log_latency:%" PRIu64 "\n", log_latency);
         }
         else if(num_events == 0){
             printf("no event!\n");

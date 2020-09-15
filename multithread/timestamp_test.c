@@ -8,7 +8,7 @@
 #include "multi_dest_header.h"
 
 //#define HARDWARE_TIMESTAMPING_ENABLE 1
-#define NUM_REQS 10 //1000*100
+#define NUM_REQS 1000*100
 
 // typedef struct __attribute__((__packed__)) {
 //   uint16_t service_id;    // Type of Service.
@@ -190,7 +190,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 send_bytes = send_bytes + numBytes;
-                printf("send:%zd\n", numBytes);
+                //printf("send:%zd\n", numBytes);
             }
         }
         Alt.request_id = Alt.request_id + 1;
@@ -219,7 +219,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 recv_bytes = recv_bytes +  numBytes;
-                printf("recv:%zd\n", numBytes);
+                //printf("recv:%zd\n", numBytes);
             } 
         }
 
@@ -288,7 +288,7 @@ int main(int argc, char *argv[]) {
         } 
         #else
         uint64_t req_rtt = clock_gettime_diff_ns(&ts1, &ts2);
-	printf("req rtt:%" PRIu64 "\n", req_rtt);
+	//printf("req rtt:%" PRIu64 "\n", req_rtt);
         fprintf(fp, "%" PRIu64 "\n", req_rtt);
         #endif           
 	}
