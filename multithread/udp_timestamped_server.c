@@ -16,21 +16,13 @@
 #include "nanosleep.h"
 #include "timestamping.h"
 #include "epoll_state.h"
+#include "multi_dest_header.h"
 
 static const int MAXPENDING = 20; // Maximum outstanding connection requests
 static const int SERVER_BUFSIZE = 1024*16;
 int closed_loop_done;
 int queued_events;
 uint64_t pkt_counter;
-
-typedef struct __attribute__((__packed__)) {
-  uint16_t service_id;    // Type of Service.
-  uint16_t request_id;    // Request identifier.
-  uint16_t packet_id;     // Packet identifier.
-  uint16_t options;       // Options (could be request length etc.).
-  in_addr_t alt_dst_ip;
-  in_addr_t alt_dst_ip2;
-} alt_header;
 
 typedef struct {
     //per thread state
@@ -125,18 +117,18 @@ int TCPSocketAceept(int servSock){
 
 int main(int argc, char *argv[]) {
 
-	char* recv_ip_addr = argv[1];     // 1st arg: server IP address (dotted quad)
+    char* recv_ip_addr = argv[1];     // 1st arg: server IP address (dotted quad)
     in_port_t recv_port_start = (in_port_t) (argc > 2) ? strtoul(argv[2], NULL, 10) : 7000;
     // assume 4 pseudo-connections per open-loop thread and only 1 closed-loop pseudo-connection
     uint32_t expected_connections = (argc > 3) ? atoi(argv[3])*4+1: 1; // pseudo-connection for UDP
     char* expname = (argc > 4) ? argv[4]: "timestamp_server";
     //double rate = (argc > 5)? atof(argv[5]): 10000.0;
     struct timespec ts1, ts2, sleep_ts1, sleep_ts2, ts3, ts4;
-    char* clientIP = "10.0.0.5"; //argv[1];
+    char* clientIP = "172.31.34.51"; //argv[1];
     closed_loop_done = 0;
     queued_events = 0;
 
-    char* interface_name = "enp59s0";
+    char* interface_name = "eth1";
     if(enable_nic_timestamping(interface_name) < 0){
         printf("NIC timestamping can't be enabled\n");
     }
@@ -205,10 +197,10 @@ int main(int argc, char *argv[]) {
     struct timestamp_info recv_info = {recv_ts, opt_id};
 
     struct sockaddr_in clntAddr;                  // Local address
-	memset(&clntAddr, 0, sizeof(clntAddr));       // Zero out structure
-	clntAddr.sin_family = AF_INET;                // IPv4 address family
-	clntAddr.sin_addr.s_addr = inet_addr(clientIP); // an incoming interface
-	clntAddr.sin_port = htons(recv_port_start);          // Local port
+    memset(&clntAddr, 0, sizeof(clntAddr));       // Zero out structure
+    clntAddr.sin_family = AF_INET;                // IPv4 address family
+    clntAddr.sin_addr.s_addr = inet_addr(clientIP); // an incoming interface
+    clntAddr.sin_port = htons(recv_port_start);          // Local port
     int clntAddrLen = sizeof(clntAddr);
 
     alt_header alt_recv_header;
@@ -218,7 +210,6 @@ int main(int argc, char *argv[]) {
 
     alt_send_header.service_id = 1;
     alt_send_header.request_id = 0;
-    alt_send_header.packet_id = 0;
     alt_send_header.options = 10;    
 
     for(int server_index = 0; server_index < expected_connections; server_index++){
@@ -298,9 +289,6 @@ int main(int argc, char *argv[]) {
                 int recv_retries = 0; 
                 int send_retries = 0;                    
                 while(recv_byte_perloop < sizeof(alt_header)){
-                    //numBytes = recvfrom(udp_socket_array[sock_index], (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
-                    //numBytes = recvfrom(e->data.fd, (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
-                    //numBytes = recv(e->data.fd, recv_buffer, 20, MSG_DONTWAIT);
                     numBytes = recvmsg(e->data.fd, &rx_hdr, 0);
 
                     if (numBytes < 0){
@@ -341,11 +329,7 @@ int main(int argc, char *argv[]) {
                 //realnanosleep(10*1000, &sleep_ts1, &sleep_ts2); // processing time 10 us
 
                 while(send_byte_perloop < sizeof(alt_header)){
-                    //numBytes = send(e->data.fd, send_buffer, 20, MSG_DONTWAIT);
-                    //alt_send_header.alt_dst_ip = server_addr_array[0].sin_addr.s_addr;
-                    //ssize_t numBytes = sendto(e->data.fd, (void*) &alt_send_header, sizeof(alt_header), MSG_DONTWAIT, (struct sockaddr *) &clntAddr, sizeof(clntAddr));                    
                     numBytes= sendmsg(e->data.fd, &tx_hdr, 0);
-                    //ssize_t numBytes = sendto(udp_socket_array[sock_index], (void*) &alt_send_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
                     if (numBytes < 0){
                         if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
                             printf("sendto EAGAIN on fd:%d\n", e->data.fd);
@@ -390,42 +374,30 @@ int main(int argc, char *argv[]) {
             int print_rx_counter = 0;
             while(udp_get_rx_timestamp(&rx_hdr, &recv_info) < 0){
                 continue;
-                // if(print_rx_counter){
-                //     printf("+");
-                // }
-                // else{
-                //     printf("extracting rx timestamp fails");   
-                //     print_rx_counter++;         
-                // }
+                if(print_rx_counter){
+                     printf("+");
+                }
+                else{
+                     printf("extracting rx timestamp fails");   
+                     print_rx_counter++;         
+                }
             }
-            // if(print_rx_counter)
-            //     printf("\n");     
-
-            //if(print_tx_counter)
-            //    printf("\n");
+            if(print_rx_counter)
+                 printf("\n");     
 
             int print_tx_counter = 0;            
             while(udp_get_tx_timestamp(udp_socket_array[0], &send_info) < 0){
                 continue;
-                // if(print_tx_counter){
-                //     printf("+");
-                // }
-                // else{
-                //     printf("extracting tx timestamp fails at req %u", req_counter);
-                //     print_tx_counter++;
-                // }
+               	if(print_tx_counter){
+                     printf("+");
+                }
+                else{
+                     printf("extracting tx timestamp fails at req %u", req_counter);
+                     print_tx_counter++;
+                }
             }
-
-            //TODO: solbve the reordering issue with tx_timestamps?
-            if(send_info.optid <= last_optid && send_info.optid!=0){
-                printf("out-of-order based on optid\n");
-                printf("send_info.optid:%u, last_optid:%u\n",send_info.optid,last_optid);
-                outoforder_timestamp++;
-            }
-            else{
-                last_optid = send_info.optid;
-            }
-     
+            if(print_tx_counter)
+                printf("\n");
 
             uint64_t host_latency = clock_gettime_diff_ns(&recv_info.time, &send_info.time);
             uint64_t app_latency = clock_gettime_diff_ns(&ts1, &ts2);
