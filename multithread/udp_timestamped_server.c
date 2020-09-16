@@ -426,9 +426,9 @@ int main(int argc, char *argv[]) {
             }
             #endif
 
-            uint64_t app_latency2 = clock_gettime_diff_ns(&ts1, &ts2);
+            //uint64_t app_latency2 = clock_gettime_diff_ns(&ts1, &ts2);
 	    //printf("app_latency:%" PRIu64 "\n", app_latency2);
-            fprintf(output_fptr, "%" PRIu64 "\n", app_latency2);
+            //fprintf(output_fptr, "%" PRIu64 "\n", app_latency2);
 
             //clock_gettime(CLOCK_REALTIME, &ts4); 
             //uint64_t log_latency = clock_gettime_diff_ns(&ts3, &ts4);
