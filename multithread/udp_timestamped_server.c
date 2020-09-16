@@ -235,12 +235,12 @@ int main(int argc, char *argv[]) {
     const char filename_prefix[] = "/tmp/";
 
     snprintf(logfilename, sizeof(filename_prefix) + sizeof(log) + 30, "%s%s%s", filename_prefix, expname, log);
-    FILE* output_fptr = fopen(logfilename, "w+");
-    if(output_fptr == NULL){
-        printf("FILE* isn't good\n");
-        fclose(output_fptr);
-        exit(0);
-    }
+    //FILE* output_fptr = fopen(logfilename, "w+");
+    //if(output_fptr == NULL){
+    //    printf("FILE* isn't good\n");
+    //    fclose(output_fptr);
+    //    exit(0);
+    //}
     //fprintf(output_fptr, "file opened!\n");
     //fflush(output_fptr);
 
