@@ -441,7 +441,7 @@ int main(int argc, char *argv[]) {
             printf("not closed-loop right!\n");
         }
         req_counter++;        
-        fflush(output_fptr);
+        //fflush(output_fptr);
     }    
     //pthread_join(*feedback_thread, NULL);
 
