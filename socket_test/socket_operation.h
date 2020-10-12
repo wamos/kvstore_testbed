@@ -19,17 +19,85 @@
 // uint64_t tcpSend(int fd ,char *buffer, uint64_t buf_size);
 // uint64_t tcpReceive(int fd, char *buffer, uint64_t buf_size);
 
-#define ITERS 1000*1000
+#define ITERS 1000
 
-typedef struct __attribute__((__packed__)) {
+// typedef struct __attribute__((__packed__)) {
+//   uint16_t service_id;    // Type of Service.
+//   uint32_t request_id;    // Request identifier.
+//   //uint16_t packet_id;     // Packet identifier.
+//   uint16_t options;       // Options (could be request length etc.).
+//   in_addr_t alt_dst_ip1;
+//   in_addr_t alt_dst_ip2;
+//   in_addr_t alt_dst_ip3;
+// } alt_header;
+
+#define FIRST_FLAG 0x20
+#define LAST_FLAG 0x10
+
+// total 24 bytes
+struct alt_header {
+  // 1 + 1 + 2 + 4 = 8 bytes
+  uint8_t  msgtype_flags;
+  uint8_t  redirection;
+  uint8_t  header_size;  	 	
+  uint8_t  reserved;
+
+  uint16_t feedback_options;	
   uint16_t service_id;    // Type of Service.
-  uint16_t request_id;    // Request identifier.
-  uint16_t packet_id;     // Packet identifier.
-  uint16_t options;       // Options (could be request length etc.).
-  in_addr_t alt_dst_ip1;
-  in_addr_t alt_dst_ip2;
-  //in_addr_t alt_dst_ip3;
-} alt_header;
+  uint32_t request_id;    // Request identifier.
+  
+  // 12 bytes
+  uint32_t alt_dst_ip;
+  uint32_t alt_dst_ip2;
+  uint32_t alt_dst_ip3;
+} __attribute__((__packed__)); // or use __rte_packed
+typedef struct alt_header alt_header;
+
+// msgtype_flags field details: suspended for now
+// -> bit 0,1: unused now
+// -> bit 2,3: FIRST_FLAG and LAST_FLAG for multi-packet req
+// -> bit 4-7: msg_type listed in the enum below
+
+enum {
+  SINGLE_PKT_REQ = 0,
+  SINGLE_PKT_RESP_PIGGYBACK,
+  SINGLE_PKT_RESP_PASSTHROUGH,  
+  HOST_FEEDBACK_MSG,
+  SWITCH_FEEDBACK_MSG,
+  MULTI_PKT_REQ,
+  MULTI_PKT_RESP_PIGGYBACK,
+  MULTI_PKT_RESP_PASSTHROUGH,  
+  CONTROL_MSG,
+};
+
+// static inline void set_alt_header_isfirst(struct alt_header *h){
+// 	h->msgtype_flags = h->msgtype_flags | FIRST_FLAG;
+// }
+
+// static inline void set_alt_header_islast(struct alt_header *h){
+// 	h->msgtype_flags = h->msgtype_flags | LAST_FLAG;
+// }
+
+// static inline uint8_t get_alt_header_isfirst(struct alt_header *h){
+// 	return (h->msgtype_flags & FIRST_FLAG) >> 6;
+// }
+
+// static inline uint8_t get_alt_header_islast(struct alt_header *h){
+// 	return (h->msgtype_flags & LAST_FLAG) >> 5;
+// }
+
+static inline void set_alt_header_msgtype(struct alt_header *h, uint8_t value){
+  //value = value & 0x0F; // leave the lower 4-bit
+  //h->msgtype_flags = h->msgtype_flags | value;
+  h->msgtype_flags = value;
+}
+
+static inline uint8_t get_alt_header_msgtype(struct alt_header *h){
+	//return (h->msgtype_flags & 0x0F) >> 4;
+  return h->msgtype_flags;
+}
+
+
 
 typedef struct {
     //per thread state

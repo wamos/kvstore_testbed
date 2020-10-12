@@ -73,7 +73,7 @@ int main(int argc, char *argv[]) {
 	memset(&routerAddr, 0, sizeof(routerAddr));       // Zero out structure
 	routerAddr.sin_family = AF_INET;                // IPv4 address family
 	routerAddr.sin_addr.s_addr = inet_addr(routerIP); // an incoming interface
-	routerAddr.sin_port = htons(recvPort+1);          // Local port
+	routerAddr.sin_port = htons(recvPort);          // Local port
     int routerAddrLen = sizeof(routerAddr);
     
     struct sockaddr_in clntAddr; // Client address
@@ -92,12 +92,13 @@ int main(int argc, char *argv[]) {
     memset(&alt_response, 0, sizeof(alt_header));
     ssize_t numBytesRcvd = 0;
     
+    printf("server started!\n");
 	while(numBytesRcvd < sizeof(alt_header)*ITERS) {
         //printf("enter while loop\n");
 
         ssize_t recv_bytes = 0;
         while(recv_bytes < sizeof(alt_header)){
-            //printf("enter recv loop\n");
+            printf("enter recv loop\n");
             ssize_t numBytes = recvfrom(listen_sock, (void*)&Alt, sizeof(Alt), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
             if (numBytes < 0){
                 if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
@@ -113,11 +114,11 @@ int main(int argc, char *argv[]) {
                 printf("recv no bytes\n");
             }
             else{                
-                // char clntName[INET_ADDRSTRLEN]; // String to contain client address
-                // if (inet_ntop(AF_INET, &clntAddr.sin_addr.s_addr, clntName, sizeof(clntName)) != NULL)
-                //     printf("Handling client %s/ %d\n", clntName, ntohs(clntAddr.sin_port));
-                // else
-                //     printf("Unable to get client address\n");
+                char clntName[INET_ADDRSTRLEN]; // String to contain client address
+                if (inet_ntop(AF_INET, &clntAddr.sin_addr.s_addr, clntName, sizeof(clntName)) != NULL)
+                    printf("Handling client %s/ %d\n", clntName, ntohs(clntAddr.sin_port));
+                else
+                    printf("Unable to get client address\n");
                 
                 // printf("service_id:%" PRIu16 ",", Alt.service_id);
                 // printf("request_id:%" PRIu32 ",", Alt.request_id);
@@ -139,23 +140,24 @@ int main(int argc, char *argv[]) {
         ssize_t send_bytes = 0;
         while(send_bytes < sizeof(alt_header)){
             //ssize_t numBytes = sendto(send_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
-            alt_response.service_id = 1;
-            alt_response.request_id = 0;
-            alt_response.packet_id = 0;
-            alt_response.options = 10;
-            alt_response.alt_dst_ip1 = clntAddr.sin_addr.s_addr;
+            set_alt_header_msgtype(&alt_response, SINGLE_PKT_RESP_PASSTHROUGH);
+            alt_response.service_id = Alt.service_id;
+            alt_response.request_id = Alt.request_id;
+            alt_response.feedback_options = 0;
+            alt_response.alt_dst_ip = clntAddr.sin_addr.s_addr;
 
             //printf("service_id:%" PRIu16 ",", alt_response.service_id);
             //printf("request_id:%" PRIu32 ",", alt_response.request_id);
             //printf("packet_id:%" PRIu32 ",", alt_response.packet_id);
             //printf("options:%" PRIu32 ",", alt_response.options);
-            struct in_addr dest_addr;
-            dest_addr.s_addr = alt_response.alt_dst_ip1;
-            char* dest_ip =inet_ntoa(dest_addr);
+            //struct in_addr dest_addr;
+            //dest_addr.s_addr = alt_response.alt_dst_ip;
+            //char* dest_ip =inet_ntoa(dest_addr);
             //printf("alt_dst_ip:%s\n", dest_ip);
+            routerAddr.sin_port = clntAddr.sin_port;
 
-            //ssize_t numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &routerAddr, sizeof(routerAddr));
-            ssize_t numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
+            ssize_t numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &routerAddr, sizeof(routerAddr));
+            //ssize_t numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
             if (numBytes < 0){
                 printf("send() failed\n");
                 exit(1);

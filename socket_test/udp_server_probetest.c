@@ -27,14 +27,14 @@ void* feedback_mainloop(void *arg){
     struct timespec ts1, ts2;
     ssize_t numBytes = 0;
     int load_index = 0;
-    int probe_counter;
+    int probe_counter = 0;
 
-    if(server_08)
-        probe_counter = 0;
-    else if(server_09)
-        probe_counter = -1;
-    else
-        printf("WTF\n");
+    // if(server_08)
+    //     probe_counter = 0;
+    // else if(server_09)
+    //     probe_counter = -1;
+    // else
+    //     printf("WTF\n");
 
     cpu_set_t cpuset;
     pthread_t thread = pthread_self();
@@ -61,18 +61,22 @@ void* feedback_mainloop(void *arg){
             diff_us = (ts2_nsec - ts1_nsec)/1000;
         }
 
-        //if(diff_us > 30*1000*1000){ // 30*10^6 us = 30 sec
-        if(recv_req_count%10 == 0 && recv_req_count > 0){
+        if(diff_us > state->feedback_period_us){ // 3 seconds
+        //if(recv_req_count%10 == 0 && recv_req_count > 0){
             printf("probe packets\n");
             probe_counter+=2;
-            state->send_header.service_id = 10;
-            state->send_header.options = probe_counter; //fake_load_sequence_yeti09[load_index];
-            state->send_header.alt_dst_ip1 = inet_addr("10.0.0.5");
-            state->send_header.alt_dst_ip2 = inet_addr("10.0.0.5");
+            //set_alt_header_msgtype(&state->send_header, HOST_FEEDBACK_MSG);
+            state->send_header.msgtype_flags = HOST_FEEDBACK_MSG;
+            state->send_header.service_id = 1;
+            state->send_header.feedback_options = probe_counter; //fake_load_sequence_yeti09[load_index];
+            state->send_header.alt_dst_ip  = inet_addr("10.0.0.4");
+            state->send_header.alt_dst_ip2 = inet_addr("10.0.0.4");
+            state->send_header.alt_dst_ip3 = inet_addr("10.0.0.4");
             numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &state->server_addr, (socklen_t) routerAddrLen);
             state->feedback_counter++;
+            printf("feedback_counter:%" PRIu32 "\n", state->feedback_counter);
             clock_gettime(CLOCK_REALTIME, &ts1);
-            recv_req_count = 0;
+            //recv_req_count = 0;
         }        
     }
 
@@ -106,21 +110,22 @@ int main(int argc, char *argv[]) {
     closed_loop_done = 0;
     recv_req_count = 0;
     int len = sizeof(recvIP);
-    if(recvIP[len-1] == '9'){
-        printf("it's 10.0.0.9\n");
-        server_09 = 1;
-        server_08 = 0;
-    }
-    else if (recvIP[len-1] == '8'){
-        printf("it's 10.0.0.8\n");
-        server_08 = 1;
-        server_09 = 0;
-    }
-    else{
-        printf("nope\n");
-        server_08 = 0;
-        server_09 = 0;
-    }
+
+    // if(recvIP[len-1] == '9'){
+    //     printf("it's 10.0.0.9\n");
+    //     server_09 = 1;
+    //     server_08 = 0;
+    // }
+    // else if (recvIP[len-1] == '8'){
+    //     printf("it's 10.0.0.8\n");
+    //     server_08 = 1;
+    //     server_09 = 0;
+    // }
+    // else{
+    //     printf("nope\n");
+    //     server_08 = 0;
+    //     server_09 = 0;
+    // }
 
     struct timespec ts1, ts2, sleep_ts1, sleep_ts2;
 
@@ -137,6 +142,13 @@ int main(int argc, char *argv[]) {
 	servAddr.sin_addr.s_addr = inet_addr(recvIP); // an incoming interface
 	servAddr.sin_port = htons(recvPort);          // Local port
     int servAddrLen = sizeof(servAddr);
+
+    struct sockaddr_in routerAddr;                  // Local address
+	memset(&routerAddr, 0, sizeof(routerAddr));       // Zero out structure
+	routerAddr.sin_family = AF_INET;                // IPv4 address family
+	routerAddr.sin_addr.s_addr = inet_addr(routerIP); // an incoming interface
+	routerAddr.sin_port = htons(recvPort);          // Local port
+    int routerAddrLen = sizeof(routerAddr);
     
     struct sockaddr_in clntAddr; // Client address
     memset(&clntAddr, 0, sizeof(clntAddr));
@@ -151,7 +163,7 @@ int main(int argc, char *argv[]) {
 
     // Init feedback_thread_state fbk_state
     fbk_state->tid = 0;
-    fbk_state->feedback_period_us = 1000; // 1000 microseconds period for feedback
+    fbk_state->feedback_period_us = 3*1000*1000; // 1000 microseconds period for feedback
     fbk_state->feedback_counter = 0;
 
     if ((fbk_state->fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0){
@@ -159,18 +171,11 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    struct sockaddr_in routerAddr;                  // Local address
-	memset(&routerAddr, 0, sizeof(routerAddr));       // Zero out structure
-	routerAddr.sin_family = AF_INET;                // IPv4 address family
-	routerAddr.sin_addr.s_addr = inet_addr(routerIP); // an incoming interface
-	routerAddr.sin_port = htons(recvPort);          // Local port
-    int routerAddrLen = sizeof(routerAddr);
-
     fbk_state->server_addr = routerAddr;    
     memset(&fbk_state->recv_header, 0, sizeof(alt_header));
     memset(&fbk_state->send_header, 0, sizeof(alt_header));
 
-    pthread_create(feedback_thread, NULL, feedback_mainloop, fbk_state);
+    //pthread_create(feedback_thread, NULL, feedback_mainloop, fbk_state);
     
     alt_header Alt;
     memset(&Alt, 0, sizeof(alt_header));
@@ -178,7 +183,8 @@ int main(int argc, char *argv[]) {
     memset(&alt_response, 0, sizeof(alt_header));
     ssize_t numBytesRcvd = 0;
     
-	while(numBytesRcvd < sizeof(alt_header)) {
+	//while(numBytesRcvd < sizeof(alt_header)) {
+    while(1){
         //printf("enter while loop\n");
 
         ssize_t recv_bytes = 0;
@@ -205,57 +211,50 @@ int main(int argc, char *argv[]) {
                 // else
                 //     printf("Unable to get client address\n");
                 
-                // printf("service_id:%" PRIu16 ",", Alt.service_id);
-                // printf("request_id:%" PRIu32 ",", Alt.request_id);
-                // printf("packet_id:%" PRIu32 ",", Alt.packet_id);
-                // printf("options:%" PRIu32 ",", Alt.options);
-                // struct in_addr dest_addr;
-                // dest_addr.s_addr = Alt.alt_dst_ip;
-                // char* dest_ip =inet_ntoa(dest_addr);
-                // printf("alt_dst_ip:%s\n", dest_ip);
-
                 recv_bytes = recv_bytes +  numBytes;
                 numBytesRcvd = numBytesRcvd + numBytes;
                 recv_req_count++;
-                printf("recv_req_count:%d", recv_req_count);
-                printf("recv:%zd\n", numBytes);
+                //printf("recv_req_count:%d\n", recv_req_count);
+                //printf("recv:%zd\n", numBytes);
             }
         }
 
+        clock_gettime(CLOCK_REALTIME, &ts1);
 
+        // clock_gettime(CLOCK_REALTIME, &ts1);
+        // sleep_ts1=ts1;
+        // realnanosleep(500*1000*1000, &sleep_ts1, &sleep_ts2); // 0.5 second
 
-        // ssize_t send_bytes = 0;
-        // while(send_bytes < sizeof(alt_header)){
-        //     //ssize_t numBytes = sendto(send_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
-        //     alt_response.service_id = 1;
-        //     alt_response.request_id = 0;
-        //     alt_response.packet_id = 0;
-        //     alt_response.options = 0;
-        //     alt_response.alt_dst_ip1 = clntAddr.sin_addr.s_addr;
+        ssize_t send_bytes = 0;
+        while(send_bytes < sizeof(alt_header)){
+            //ssize_t numBytes = sendto(send_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
+            alt_response.msgtype_flags = SINGLE_PKT_RESP_PASSTHROUGH;
+            alt_response.service_id = 1;
+            alt_response.request_id = 0;
+            alt_response.feedback_options = recv_req_count;
+            //alt_response.alt_dst_ip = inet_addr("10.0.0.5");
+            alt_response.alt_dst_ip = clntAddr.sin_addr.s_addr;
+            routerAddr.sin_port = clntAddr.sin_port; // set to the right port
 
-        //     //printf("service_id:%" PRIu16 ",", alt_response.service_id);
-        //     //printf("request_id:%" PRIu32 ",", alt_response.request_id);
-        //     //printf("packet_id:%" PRIu32 ",", alt_response.packet_id);
-        //     //printf("options:%" PRIu32 ",", alt_response.options);
-        //     struct in_addr dest_addr;
-        //     dest_addr.s_addr = alt_response.alt_dst_ip1;
-        //     char* dest_ip =inet_ntoa(dest_addr);
-        //     //printf("alt_dst_ip:%s\n", dest_ip);
+            // struct in_addr dest_addr;
+            // dest_addr.s_addr = alt_response.alt_dst_ip;
+            // char* dest_ip =inet_ntoa(dest_addr);
+            //printf("alt_dst_ip:%s\n", dest_ip);
 
-        //     //ssize_t numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &routerAddr, sizeof(routerAddr));
-        //     ssize_t numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
-        //     if (numBytes < 0){
-        //         printf("send() failed\n");
-        //         exit(1);
-        //     }
-        //     else if (numBytes == 0){
-        //         printf("send no bytes\n");
-        //     }
-        //     else{
-        //         send_bytes = send_bytes + numBytes;
-        //         //printf("send:%zd\n", numBytes);
-        //     }
-        // }
+            ssize_t numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &routerAddr, sizeof(routerAddr));
+            //ssize_t numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
+            if (numBytes < 0){
+                printf("send() failed\n");
+                exit(1);
+            }
+            else if (numBytes == 0){
+                printf("send no bytes\n");
+            }
+            else{
+                send_bytes = send_bytes + numBytes;
+                //printf("send:%zd\n", numBytes);
+            }
+        }
 
 	}
     closed_loop_done = 1;

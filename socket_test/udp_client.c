@@ -13,17 +13,21 @@
 
 int main(int argc, char *argv[]) {
 
-	char* routerIP = "10.0.0.18"; //argv[1];     // 1st arg: BESS IP address (dotted quad)
+	char* routerIP = argv[1];     // 1st arg: BESS IP address (dotted quad)
     char* destIP = argv[2];     // 2nd arg: alt dest ip addr;
     in_port_t recvPort = (argc > 2) ? atoi(argv[3]) : 6379;
     int is_direct_to_server = (argc > 3) ? atoi(argv[4]) : 1;
-    char* expname = (argc > 4) ? argv[5] : "bess_test";
-    const char filename_prefix[] = "/home/shw328/kvstore/log/bess_test/";
+    char* expname = (argc > 4) ? argv[5] : "dpdk_tor_test";
+    const char filename_prefix[] = "/home/shw328/multi-tor-evalution/onearm_lb/log/";
     const char log[] = ".log";
     char logfilename[100];
     snprintf(logfilename, sizeof(filename_prefix) + sizeof(log) + 30, "%s%s%s", filename_prefix, expname, log);
     struct timespec ts1, ts2, sleep_ts1, sleep_ts2;
     FILE* fp = fopen(logfilename,"w+");
+    if(fp == NULL){
+        printf("fail to open the file\n");
+        exit(1);
+    }
 
   	// Create a reliable, stream socket using UDP
 	int send_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -48,15 +52,18 @@ int main(int argc, char *argv[]) {
     int servAddrLen = sizeof(servAddr);
 
     //our alt header
-    alt_header Alt;    
+    struct alt_header Alt;    
     Alt.service_id = 1;
     Alt.request_id = 0;
-    Alt.packet_id = 0;
-    Alt.options = 10;
-    Alt.alt_dst_ip1 = inet_addr(destIP);
-    //printf("sizeif Alt: %ld\n", sizeof(Alt));
+    Alt.feedback_options = 10;
+    Alt.msgtype_flags = 0;
+    set_alt_header_msgtype(&Alt, SINGLE_PKT_REQ);
+    Alt.alt_dst_ip = inet_addr("10.0.0.5");
+    Alt.alt_dst_ip2 = inet_addr("10.0.0.8");
+    Alt.alt_dst_ip3 = inet_addr("10.0.0.9");
+    printf("sizeif Alt: %ld\n", sizeof(Alt));
 
-    alt_header recv_alt;
+    struct alt_header recv_alt;
 
 	//clock_gettime(CLOCK_REALTIME, &starttime_spec);
     ssize_t numBytes = 0;
@@ -65,10 +72,10 @@ int main(int argc, char *argv[]) {
         clock_gettime(CLOCK_REALTIME, &ts1);
         ssize_t send_bytes = 0;
         while(send_bytes < sizeof(alt_header)){
-            if(is_direct_to_server)
-                numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &servAddr, (socklen_t) servAddrLen); 
-            else
-                numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &routerAddr, (socklen_t) routerAddrLen);
+            //if(is_direct_to_server)
+                //numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &servAddr, (socklen_t) servAddrLen); 
+            //else
+            numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &routerAddr, (socklen_t) routerAddrLen);
 
             if (numBytes < 0){
                 printf("send() failed\n");
@@ -76,11 +83,10 @@ int main(int argc, char *argv[]) {
             }
             else{
                 send_bytes = send_bytes + numBytes;
-                printf("send:%zd\n", numBytes);
+                //printf("send:%zd\n", numBytes);
             }
         }
         Alt.request_id = Alt.request_id + 1;
-        Alt.packet_id = Alt.packet_id + 1;
         
         ssize_t recv_bytes = 0;
         while(recv_bytes < sizeof(alt_header)){
@@ -101,17 +107,20 @@ int main(int argc, char *argv[]) {
             }
             else{
                 recv_bytes = recv_bytes +  numBytes;
-                printf("recv:%zd\n", numBytes);
+                //printf("recv:%zd\n", numBytes);
             } 
         }
+
         clock_gettime(CLOCK_REALTIME, &ts2);
         if(ts1.tv_sec == ts2.tv_sec){
             fprintf(fp, "%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec); 
+            printf("%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec);
         }
         else{ 
             uint64_t ts1_nsec = ts1.tv_nsec + 1000000000*ts1.tv_sec;
             uint64_t ts2_nsec = ts2.tv_nsec + 1000000000*ts2.tv_sec;                    
             fprintf(fp, "%" PRIu64 "\n", ts2_nsec - ts1_nsec);
+            printf("%" PRIu64 "\n", ts2_nsec - ts1_nsec);
         } 
 	}
 
