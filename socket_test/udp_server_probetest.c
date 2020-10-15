@@ -27,7 +27,7 @@ void* feedback_mainloop(void *arg){
     struct timespec ts1, ts2;
     ssize_t numBytes = 0;
     int load_index = 0;
-    int probe_counter = 0;
+    int probe_counter = 3;
 
     // if(server_08)
     //     probe_counter = 0;
@@ -64,14 +64,14 @@ void* feedback_mainloop(void *arg){
         if(diff_us > state->feedback_period_us){ // 3 seconds
         //if(recv_req_count%10 == 0 && recv_req_count > 0){
             printf("probe packets\n");
-            probe_counter+=2;
+            //probe_counter+=2;
             //set_alt_header_msgtype(&state->send_header, HOST_FEEDBACK_MSG);
             state->send_header.msgtype_flags = HOST_FEEDBACK_MSG;
             state->send_header.service_id = 1;
             state->send_header.feedback_options = probe_counter; //fake_load_sequence_yeti09[load_index];
-            state->send_header.alt_dst_ip  = inet_addr("10.0.0.4");
-            state->send_header.alt_dst_ip2 = inet_addr("10.0.0.4");
-            state->send_header.alt_dst_ip3 = inet_addr("10.0.0.4");
+            state->send_header.alt_dst_ip  = state->server_addr.sin_addr.s_addr;
+            state->send_header.alt_dst_ip2 = state->server_addr.sin_addr.s_addr;
+            state->send_header.alt_dst_ip3 = state->server_addr.sin_addr.s_addr;
             numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &state->server_addr, (socklen_t) routerAddrLen);
             state->feedback_counter++;
             printf("feedback_counter:%" PRIu32 "\n", state->feedback_counter);
@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
 
     // Init feedback_thread_state fbk_state
     fbk_state->tid = 0;
-    fbk_state->feedback_period_us = 3*1000*1000; // 1000 microseconds period for feedback
+    fbk_state->feedback_period_us = 1000; // 1000 microseconds period for feedback
     fbk_state->feedback_counter = 0;
 
     if ((fbk_state->fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0){
