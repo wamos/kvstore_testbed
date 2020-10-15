@@ -98,7 +98,7 @@ int main(int argc, char *argv[]) {
 
         ssize_t recv_bytes = 0;
         while(recv_bytes < sizeof(alt_header)){
-            printf("enter recv loop\n");
+            //printf("enter recv loop\n");
             ssize_t numBytes = recvfrom(listen_sock, (void*)&Alt, sizeof(Alt), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
             if (numBytes < 0){
                 if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
@@ -114,29 +114,29 @@ int main(int argc, char *argv[]) {
                 printf("recv no bytes\n");
             }
             else{                
-                char clntName[INET_ADDRSTRLEN]; // String to contain client address
+                /*char clntName[INET_ADDRSTRLEN]; // String to contain client address
                 if (inet_ntop(AF_INET, &clntAddr.sin_addr.s_addr, clntName, sizeof(clntName)) != NULL)
                     printf("Handling client %s/ %d\n", clntName, ntohs(clntAddr.sin_port));
                 else
                     printf("Unable to get client address\n");
-                
+                */
                 // printf("service_id:%" PRIu16 ",", Alt.service_id);
                 // printf("request_id:%" PRIu32 ",", Alt.request_id);
                 // printf("packet_id:%" PRIu32 ",", Alt.packet_id);
                 // printf("options:%" PRIu32 ",", Alt.options);
-                // struct in_addr dest_addr;
-                // dest_addr.s_addr = Alt.alt_dst_ip;
-                // char* dest_ip =inet_ntoa(dest_addr);
-                // printf("alt_dst_ip:%s\n", dest_ip);
+                struct in_addr dest_addr;
+               	dest_addr.s_addr = Alt.alt_dst_ip;
+                char* dest_ip = inet_ntoa(dest_addr);
+                //printf("src_ip:%s\n", dest_ip);
 
                 recv_bytes = recv_bytes +  numBytes;
                 numBytesRcvd = numBytesRcvd + numBytes;
-                printf("recv:%zd\n", numBytes);
+                //printf("recv:%zd\n", numBytes);
             }
         }
 
 
-
+	
         ssize_t send_bytes = 0;
         while(send_bytes < sizeof(alt_header)){
             //ssize_t numBytes = sendto(send_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
@@ -144,7 +144,7 @@ int main(int argc, char *argv[]) {
             alt_response.service_id = Alt.service_id;
             alt_response.request_id = Alt.request_id;
             alt_response.feedback_options = 0;
-            alt_response.alt_dst_ip = clntAddr.sin_addr.s_addr;
+            alt_response.alt_dst_ip = Alt.alt_dst_ip; //clntAddr.sin_addr.s_addr;
 
             //printf("service_id:%" PRIu16 ",", alt_response.service_id);
             //printf("request_id:%" PRIu32 ",", alt_response.request_id);
@@ -167,7 +167,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 send_bytes = send_bytes + numBytes;
-                printf("send:%zd\n", numBytes);
+                //printf("send:%zd\n", numBytes);
             }
         }
 
