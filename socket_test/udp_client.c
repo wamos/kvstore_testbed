@@ -18,7 +18,7 @@ int main(int argc, char *argv[]) {
     in_port_t recvPort = (argc > 2) ? atoi(argv[3]) : 6379;
     int is_direct_to_server = (argc > 3) ? atoi(argv[4]) : 1;
     char* expname = (argc > 4) ? argv[5] : "dpdk_tor_test";
-    const char filename_prefix[] = "/home/shw328/multi-tor-evalution/onearm_lb/log/";
+    const char filename_prefix[] = "/home/ec2-user/multi-tor-evalution/onearm_lb/log/";
     const char log[] = ".log";
     char logfilename[100];
     snprintf(logfilename, sizeof(filename_prefix) + sizeof(log) + 30, "%s%s%s", filename_prefix, expname, log);
@@ -58,13 +58,11 @@ int main(int argc, char *argv[]) {
     Alt.feedback_options = 10;
     Alt.msgtype_flags = 0;
     set_alt_header_msgtype(&Alt, SINGLE_PKT_REQ);
-    Alt.alt_dst_ip = inet_addr("10.0.0.5");
-    Alt.alt_dst_ip2 = inet_addr("10.0.0.8");
-    Alt.alt_dst_ip3 = inet_addr("10.0.0.9");
+    Alt.alt_dst_ip = inet_addr(destIP);
+    Alt.alt_dst_ip2 = inet_addr("172.31.43.18");
+    Alt.alt_dst_ip3 = inet_addr("172.31.43.74"); 
     printf("sizeif Alt: %ld\n", sizeof(Alt));
-
     struct alt_header recv_alt;
-
 	//clock_gettime(CLOCK_REALTIME, &starttime_spec);
     ssize_t numBytes = 0;
 	for(int iter = 0; iter < ITERS; iter++){
@@ -72,10 +70,10 @@ int main(int argc, char *argv[]) {
         clock_gettime(CLOCK_REALTIME, &ts1);
         ssize_t send_bytes = 0;
         while(send_bytes < sizeof(alt_header)){
-            //if(is_direct_to_server)
-                //numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &servAddr, (socklen_t) servAddrLen); 
-            //else
-            numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &routerAddr, (socklen_t) routerAddrLen);
+            if(is_direct_to_server)
+                numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &servAddr, (socklen_t) servAddrLen); 
+            else
+            	numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &routerAddr, (socklen_t) routerAddrLen);
 
             if (numBytes < 0){
                 printf("send() failed\n");
@@ -90,7 +88,8 @@ int main(int argc, char *argv[]) {
         
         ssize_t recv_bytes = 0;
         while(recv_bytes < sizeof(alt_header)){
-            numBytes = recvfrom(send_sock, (void*) &recv_alt, sizeof(recv_alt), 0, (struct sockaddr *) &servAddr, (socklen_t*) &servAddrLen);
+	     numBytes = recvfrom(send_sock, (void*) &recv_alt, sizeof(recv_alt), 0, (struct sockaddr *) &routerAddr, (socklen_t*) &routerAddrLen);		
+            //numBytes = recvfrom(send_sock, (void*) &recv_alt, sizeof(recv_alt), 0, (struct sockaddr *) &servAddr, (socklen_t*) &servAddrLen);
 
             if (numBytes < 0){
                 if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
@@ -111,7 +110,7 @@ int main(int argc, char *argv[]) {
             } 
         }
 
-        clock_gettime(CLOCK_REALTIME, &ts2);
+        /*clock_gettime(CLOCK_REALTIME, &ts2);
         if(ts1.tv_sec == ts2.tv_sec){
             fprintf(fp, "%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec); 
             printf("%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec);
@@ -121,7 +120,7 @@ int main(int argc, char *argv[]) {
             uint64_t ts2_nsec = ts2.tv_nsec + 1000000000*ts2.tv_sec;                    
             fprintf(fp, "%" PRIu64 "\n", ts2_nsec - ts1_nsec);
             printf("%" PRIu64 "\n", ts2_nsec - ts1_nsec);
-        } 
+        }*/ 
 	}
 
 	close(send_sock);
