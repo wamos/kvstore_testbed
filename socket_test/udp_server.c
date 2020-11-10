@@ -44,6 +44,7 @@ int main(int argc, char *argv[]) {
 	char* recvIP = argv[1];     // 1st arg: server IP address (dotted quad)
     char* routerIP = argv[2];     // 2nd arg: alt dest ip addr;
     in_port_t recvPort = (argc > 2) ? atoi(argv[3]) : 6379;
+    int is_direct_to_client = (argc > 3) ? atoi(argv[4]) : 1;
 
     char recv_buffer[20];
     char send_buffer[20];
@@ -91,7 +92,9 @@ int main(int argc, char *argv[]) {
     alt_header alt_response;
     memset(&alt_response, 0, sizeof(alt_header));
     ssize_t numBytesRcvd = 0;
+    ssize_t numRcvd = 0;
     
+    printf("sizeif Alt: %ld\n", sizeof(Alt));
     printf("server started!\n");
 	while(numBytesRcvd < sizeof(alt_header)*ITERS) {
         //printf("enter while loop\n");
@@ -124,27 +127,28 @@ int main(int argc, char *argv[]) {
                 // printf("request_id:%" PRIu32 ",", Alt.request_id);
                 // printf("packet_id:%" PRIu32 ",", Alt.packet_id);
                 // printf("options:%" PRIu32 ",", Alt.options);
-                struct in_addr dest_addr;
-               	dest_addr.s_addr = Alt.alt_dst_ip;
-                char* dest_ip = inet_ntoa(dest_addr);
+                //struct in_addr dest_addr;
+               	//dest_addr.s_addr = Alt.actual_src_ip;
+                //char* dest_ip = inet_ntoa(dest_addr);
                 //printf("src_ip:%s\n", dest_ip);
+                //printf("req_id:%" PRIu32 "\n", Alt.request_id);
 
                 recv_bytes = recv_bytes +  numBytes;
                 numBytesRcvd = numBytesRcvd + numBytes;
-                //printf("recv:%zd\n", numBytes);
+                numRcvd++;
+                printf("recv:%zd\n", numRcvd);
             }
         }
-
-
 	
         ssize_t send_bytes = 0;
         while(send_bytes < sizeof(alt_header)){
             //ssize_t numBytes = sendto(send_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
+            //set_alt_header_msgtype(&alt_response, SINGLE_PKT_RESP_PASSTHROUGH);
             set_alt_header_msgtype(&alt_response, SINGLE_PKT_RESP_PASSTHROUGH);
             alt_response.service_id = Alt.service_id;
             alt_response.request_id = Alt.request_id;
             alt_response.feedback_options = 0;
-            alt_response.alt_dst_ip = Alt.alt_dst_ip; //clntAddr.sin_addr.s_addr;
+            alt_response.alt_dst_ip = Alt.actual_src_ip; //clntAddr.sin_addr.s_addr;
 
             //printf("service_id:%" PRIu16 ",", alt_response.service_id);
             //printf("request_id:%" PRIu32 ",", alt_response.request_id);
@@ -156,8 +160,12 @@ int main(int argc, char *argv[]) {
             //printf("alt_dst_ip:%s\n", dest_ip);
             routerAddr.sin_port = clntAddr.sin_port;
 
-            ssize_t numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &routerAddr, sizeof(routerAddr));
-            //ssize_t numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
+            ssize_t numBytes;
+            if(is_direct_to_client == 0)
+                numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &routerAddr, sizeof(routerAddr));            
+            else
+                numBytes = sendto(listen_sock, (void*) &alt_response, sizeof(alt_response), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
+
             if (numBytes < 0){
                 printf("send() failed\n");
                 exit(1);
@@ -167,7 +175,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 send_bytes = send_bytes + numBytes;
-                //printf("send:%zd\n", numBytes);
+                printf("send:%zd\n", numBytes);
             }
         }
 

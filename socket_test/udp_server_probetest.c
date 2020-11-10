@@ -70,8 +70,8 @@ void* feedback_mainloop(void *arg){
             state->send_header.service_id = 1;
             state->send_header.feedback_options = probe_counter; //fake_load_sequence_yeti09[load_index];
             state->send_header.alt_dst_ip  = state->server_addr.sin_addr.s_addr;
-            state->send_header.alt_dst_ip2 = state->server_addr.sin_addr.s_addr;
-            state->send_header.alt_dst_ip3 = state->server_addr.sin_addr.s_addr;
+            //state->send_header.alt_dst_ip2 = state->server_addr.sin_addr.s_addr;
+            //state->send_header.alt_dst_ip3 = state->server_addr.sin_addr.s_addr;
             numBytes = sendto(state->fd, (void*) &state->send_header, sizeof(alt_header), 0, (struct sockaddr *) &state->server_addr, (socklen_t) routerAddrLen);
             state->feedback_counter++;
             printf("feedback_counter:%" PRIu32 "\n", state->feedback_counter);
@@ -233,7 +233,7 @@ int main(int argc, char *argv[]) {
             alt_response.request_id = 0;
             alt_response.feedback_options = recv_req_count;
             //alt_response.alt_dst_ip = inet_addr("10.0.0.5");
-            alt_response.alt_dst_ip = clntAddr.sin_addr.s_addr;
+            alt_response.alt_dst_ip = Alt.alt_dst_ip;
             routerAddr.sin_port = clntAddr.sin_port; // set to the right port
 
             // struct in_addr dest_addr;

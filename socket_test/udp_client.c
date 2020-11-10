@@ -11,23 +11,59 @@
 #include <arpa/inet.h>
 #include "socket_operation.h"
 
+int UDPSocketSetup(int servSock, struct sockaddr_in servAddr){
+    int clntSock;
+    // Bind to the local address
+	if (bind(servSock, (struct sockaddr*) &servAddr, sizeof(servAddr)) < 0){
+		perror("bind() failed\n");
+        exit(1);
+    }
+    
+	int flag = 1;
+	if (setsockopt(servSock, SOL_SOCKET, SO_REUSEADDR, (char *)&flag,
+	  sizeof(int)) == -1) { 
+        perror("setsockopt SO_REUSEADDR error\n"); 
+        exit(1); 
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
 
-	char* routerIP = argv[1];     // 1st arg: BESS IP address (dotted quad)
-    char* destIP = argv[2];     // 2nd arg: alt dest ip addr;
-    in_port_t recvPort = (argc > 2) ? atoi(argv[3]) : 6379;
-    int is_direct_to_server = (argc > 3) ? atoi(argv[4]) : 1;
-    char* expname = (argc > 4) ? argv[5] : "dpdk_tor_test";
+	char* recvIP = argv[1];
+    char* routerIP = argv[2];   // 1st arg: BESS IP address (dotted quad)
+    char* destIP = argv[3];     // 2nd arg: alt dest ip addr;
+	char* destIP2 = argv[4];
+	char* destIP3 = argv[5];
+    in_port_t recvPort = (argc > 5) ? atoi(argv[6]) : 6379;
+    int is_direct_to_server = (argc > 6) ? atoi(argv[7]) : 1;
+    char* expname = (argc > 7) ? argv[8] : "dpdk_tor_test";
     const char filename_prefix[] = "/home/ec2-user/multi-tor-evalution/onearm_lb/log/";
     const char log[] = ".log";
     char logfilename[100];
     snprintf(logfilename, sizeof(filename_prefix) + sizeof(log) + 30, "%s%s%s", filename_prefix, expname, log);
     struct timespec ts1, ts2, sleep_ts1, sleep_ts2;
-    FILE* fp = fopen(logfilename,"w+");
-    if(fp == NULL){
-        printf("fail to open the file\n");
+    //FILE* fp = fopen(logfilename,"w+");
+    //if(fp == NULL){
+    //    printf("fail to open the file\n");
+    //    exit(1);
+    //}
+
+    int listen_sock;
+    if ((listen_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0){
+		perror("socket() failed\n");
         exit(1);
     }
+
+    struct sockaddr_in clntAddr; // Client address
+    memset(&clntAddr, 0, sizeof(clntAddr));
+	clntAddr.sin_family = AF_INET;                // IPv4 address family
+	clntAddr.sin_addr.s_addr = inet_addr(recvIP); // an incoming interface
+	clntAddr.sin_port = htons(recvPort);          // Local port
+    int clntAddrLen = sizeof(clntAddr);
+
+    UDPSocketSetup(listen_sock, clntAddr);
 
   	// Create a reliable, stream socket using UDP
 	int send_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -58,10 +94,12 @@ int main(int argc, char *argv[]) {
     Alt.feedback_options = 10;
     Alt.msgtype_flags = 0;
     set_alt_header_msgtype(&Alt, SINGLE_PKT_REQ);
-    Alt.alt_dst_ip = inet_addr(destIP);
-    Alt.alt_dst_ip2 = inet_addr("172.31.43.18");
-    Alt.alt_dst_ip3 = inet_addr("172.31.43.74"); 
+    Alt.alt_dst_ip  = inet_addr(destIP);
+    Alt.replica_dst_list[0] = inet_addr(destIP);
+	Alt.replica_dst_list[1] = inet_addr(destIP2);
+	Alt.replica_dst_list[2] = inet_addr(destIP3); 
     printf("sizeif Alt: %ld\n", sizeof(Alt));
+    printf("is_direct_to_server: %d\n", is_direct_to_server);
     struct alt_header recv_alt;
 	//clock_gettime(CLOCK_REALTIME, &starttime_spec);
     ssize_t numBytes = 0;
@@ -71,9 +109,9 @@ int main(int argc, char *argv[]) {
         ssize_t send_bytes = 0;
         while(send_bytes < sizeof(alt_header)){
             if(is_direct_to_server)
-                numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &servAddr, (socklen_t) servAddrLen); 
+                numBytes = sendto(listen_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &servAddr, (socklen_t) servAddrLen); 
             else
-            	numBytes = sendto(send_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &routerAddr, (socklen_t) routerAddrLen);
+            	numBytes = sendto(listen_sock, (void*) &Alt, sizeof(Alt), 0, (struct sockaddr *) &routerAddr, (socklen_t) routerAddrLen);
 
             if (numBytes < 0){
                 printf("send() failed\n");
@@ -81,15 +119,15 @@ int main(int argc, char *argv[]) {
             }
             else{
                 send_bytes = send_bytes + numBytes;
-                //printf("send:%zd\n", numBytes);
+                printf("send:%zd\n", numBytes);
             }
         }
         Alt.request_id = Alt.request_id + 1;
         
         ssize_t recv_bytes = 0;
         while(recv_bytes < sizeof(alt_header)){
-	     numBytes = recvfrom(send_sock, (void*) &recv_alt, sizeof(recv_alt), 0, (struct sockaddr *) &routerAddr, (socklen_t*) &routerAddrLen);		
-            //numBytes = recvfrom(send_sock, (void*) &recv_alt, sizeof(recv_alt), 0, (struct sockaddr *) &servAddr, (socklen_t*) &servAddrLen);
+            //numBytes = recvfrom(listen_sock, (void*) &recv_alt, sizeof(recv_alt), 0, (struct sockaddr *) &routerAddr, (socklen_t*) &routerAddrLen);
+            numBytes = recvfrom(listen_sock, (void*) &recv_alt, sizeof(recv_alt), 0, (struct sockaddr *) &servAddr, (socklen_t*) &servAddrLen);
 
             if (numBytes < 0){
                 if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
@@ -106,7 +144,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 recv_bytes = recv_bytes +  numBytes;
-                //printf("recv:%zd\n", numBytes);
+                printf("recv:%zd\n", numBytes);
             } 
         }
 
@@ -124,7 +162,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	close(send_sock);
-    fclose(fp);
+    //fclose(fp);
 
   	exit(0);
 }
