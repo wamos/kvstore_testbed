@@ -53,7 +53,11 @@ int main(int argc, char *argv[]) {
     char* destIP3 = "10.0.0.9";
     in_port_t recvPort = (argc > 2) ? atoi(argv[2]) : 6379;
     int is_direct_to_server = (argc > 3) ? atoi(argv[3]) : 1;
-    char* expname = (argc > 4) ? argv[4] : "timestamp_test";
+    // service_id == 1: pass-through requests
+    // service_id == 11: requests with replica selection with periodic feedabck: 
+    // service_id == 21: requests with replica selection with piggyback
+    uint16_t request_service_id = (uint16_t) (argc > 4) ? atoi(argv[4]) : 1;
+    char* expname = (argc > 5) ? argv[5] : "timestamp_test";    
     //const char filename_prefix[] = "/home/shw328/kvstore/log/";
     const char filename_prefix[] = "/tmp/";
     const char log[] = ".log";
@@ -116,7 +120,8 @@ int main(int argc, char *argv[]) {
     //our alt header
     alt_header Alt;    
     //Alt.service_id = 1; // pass through request
-    Alt.service_id = 11; // selection request
+    //Alt.service_id = 11; // selection request // selection request
+    Alt.service_id = request_service_id; 
     Alt.request_id = 0;
     Alt.options = 10;
     //Alt.alt_dst_ip = inet_addr(destIP);
@@ -191,42 +196,42 @@ int main(int argc, char *argv[]) {
             #ifdef HARDWARE_TIMESTAMPING_ENABLE
             int replica_num = rand()%3;
             if(replica_num == 0){
-                // if(is_direct_to_server == 1){
-                //     servAddr.sin_addr.s_addr = inet_addr(destIP);
-                // }
-                // else{
-                servAddr.sin_addr.s_addr = inet_addr(destIP);
-                //printf("alt_dst_ip:%s\n", destIP);
-                Alt.alt_dst_ip = inet_addr(destIP);
-                Alt.alt_dst_ip2 = inet_addr(destIP2);
-                Alt.alt_dst_ip3 = inet_addr(destIP3);
-                //}
+                if(is_direct_to_server == 1){
+                    servAddr.sin_addr.s_addr = inet_addr(destIP);
+                }
+                else{
+                    //printf("alt_dst_ip:%s\n", destIP);
+                    servAddr.sin_addr.s_addr = inet_addr(destIP);                    
+                    Alt.alt_dst_ip = inet_addr(destIP);
+                    Alt.alt_dst_ip2 = inet_addr(destIP2);
+                    Alt.alt_dst_ip3 = inet_addr(destIP3);
+                }
                 replica_0++;
             }
             else if(replica_num == 1){
-                // if(is_direct_to_server == 1){
-                //     servAddr.sin_addr.s_addr = inet_addr(destIP2);
-                // }
-                // else{
-                servAddr.sin_addr.s_addr = inet_addr(destIP2);
-                //printf("alt_dst_ip:%s\n", destIP2);
-                Alt.alt_dst_ip = inet_addr(destIP2);
-                Alt.alt_dst_ip2 = inet_addr(destIP3);
-                Alt.alt_dst_ip3 = inet_addr(destIP); 
-                //}
+                if(is_direct_to_server == 1){
+                    servAddr.sin_addr.s_addr = inet_addr(destIP2);
+                }
+                else{
+                    //printf("alt_dst_ip:%s\n", destIP2);
+                    servAddr.sin_addr.s_addr = inet_addr(destIP2);                    
+                    Alt.alt_dst_ip = inet_addr(destIP2);
+                    Alt.alt_dst_ip2 = inet_addr(destIP3);
+                    Alt.alt_dst_ip3 = inet_addr(destIP); 
+                }
                 replica_1++;               
             }
             else{
-                //if(is_direct_to_server == 1){
-                //     servAddr.sin_addr.s_addr = inet_addr(destIP3);
-                // }
-                // else{
-                servAddr.sin_addr.s_addr = inet_addr(destIP3);
-                //printf("alt_dst_ip:%s\n", destIP3);
-                Alt.alt_dst_ip = inet_addr(destIP3);
-                Alt.alt_dst_ip2 = inet_addr(destIP);
-                Alt.alt_dst_ip3 = inet_addr(destIP2);
-                //}
+                if(is_direct_to_server == 1){
+                    servAddr.sin_addr.s_addr = inet_addr(destIP3);
+                }
+                else{
+                    //printf("alt_dst_ip:%s\n", destIP3);
+                    servAddr.sin_addr.s_addr = inet_addr(destIP3);                
+                    Alt.alt_dst_ip = inet_addr(destIP3);
+                    Alt.alt_dst_ip2 = inet_addr(destIP);
+                    Alt.alt_dst_ip3 = inet_addr(destIP2);
+                }
                 replica_2++;
             }
             //tx_iovec.iov_base = (void*) &Alt;
@@ -243,7 +248,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 send_bytes = send_bytes + numBytes;
-                //printf("send:%zd\n", numBytes);
+                //printf("send:%" PRIu32 "\n", Alt.request_id);
             }
         }
         Alt.request_id = Alt.request_id + 1;
@@ -272,7 +277,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 recv_bytes = recv_bytes +  numBytes;
-                //printf("recv:%zd\n", numBytes);
+                //printf("recv:%" PRIu32 "\n", recv_alt.request_id);
             } 
         }
 

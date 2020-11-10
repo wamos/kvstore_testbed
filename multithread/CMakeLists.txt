@@ -59,7 +59,9 @@ target_link_libraries(timerwheel_baseline_client PRIVATE cpp_dist)
 target_link_libraries(timerwheel_baseline_client PRIVATE m)
 
 add_executable(timerwheel_server timerwheel_server.c)
-add_executable(timerwheel_roundrobin_server timerwheel_roundrobin_server.c)
+target_link_libraries(timerwheel_server PRIVATE cpp_dist)
+target_link_libraries(timerwheel_server PRIVATE m)
+#add_executable(timerwheel_roundrobin_server timerwheel_roundrobin_server.c)
 
 add_executable(dist_test dist_test.c)
 target_link_libraries(dist_test PRIVATE cpp_dist )

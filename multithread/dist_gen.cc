@@ -17,6 +17,12 @@ void GenPoissonArrival(double rate, uint32_t size, double* poisson_array) {
     dist_gen.OutputExponentialInMicroseconds(poisson_array);
 }
 
+void GenUniformDist(int lower_bound, int upper_bound, uint32_t seed, uint32_t size, int* output_array){
+    DistGen dist_gen;
+    dist_gen.UniformRandomGen(lower_bound, upper_bound, seed, size);
+    dist_gen.OutputUniformRandomInMicroseconds(output_array);
+}
+
 
 #ifdef __cplusplus
 }

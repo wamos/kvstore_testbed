@@ -10,10 +10,13 @@ class DistGen {
         DistGen();
         ~DistGen();
         void ExponentialGen(double rate, uint32_t size);
+        void UniformRandomGen(int lower_bound, int upper_bound, uint32_t seed, uint32_t size);
         int OutputExponentialInMicroseconds(double* output_array);
+        int OutputUniformRandomInMicroseconds(int* output_array);
 
     private:
         std::vector<double> exponential_vector;
+        std::vector<int> uniform_random_vector;
 };
 
 #endif //CPP_DIST_H

@@ -25,7 +25,7 @@
 
 #define OPEN_LOOP_ENABLE 1
 #define MAX_NUM_REQ 100*1000
-#define MAX_NUM_TEST 100*1000
+#define MAX_NUM_TEST 200*1000
 #define MAX_NUM_SAMPLE 100*1000 //100*1000
 
 // typedef struct __attribute__((__packed__)) {
@@ -417,7 +417,7 @@ void* closedloop_latency_measurement(void *arg){
 int main(int argc, char *argv[]) {    
     double rate = (argc > 1)? atof(argv[1]): 2000.0;
     is_direct_to_server = (argc > 2) ? atoi(argv[2]) : 1;
-    is_random_selection = (argc > 3) ? atoi(argv[3]) : 0;
+    is_random_selection = (argc > 3) ? atoi(argv[3]) : 1;
     uint32_t num_threads_openloop = (uint32_t) (argc > 4) ? atoi(argv[4]): 30;
     uint32_t num_threads_closedloop = (uint32_t) (argc > 5) ? atoi(argv[5]): 1;
     char* identify_string = (argc > 6) ? argv[6]: "test";
@@ -521,7 +521,7 @@ int main(int argc, char *argv[]) {
             //openloop_thread_state[thread_id].conn_list[conn_index].temp_send_buffer = 0;
             memset(&openloop_thread_state[thread_id].conn_list[conn_index].temp_send_buffer, 0, sizeof(alt_header));
             memset(&openloop_thread_state[thread_id].conn_list[conn_index].temp_recv_buffer, 0, sizeof(alt_header));
-            openloop_thread_state[thread_id].conn_list[conn_index].temp_send_buffer.service_id = 11;
+            openloop_thread_state[thread_id].conn_list[conn_index].temp_send_buffer.service_id = 1; //11;
             openloop_thread_state[thread_id].conn_list[conn_index].temp_send_buffer.alt_dst_ip = inet_addr(recv_ip_addr);
             openloop_thread_state[thread_id].conn_list[conn_index].temp_send_buffer.alt_dst_ip2 = inet_addr(recv_ip_addr2);
             openloop_thread_state[thread_id].conn_list[conn_index].temp_send_buffer.alt_dst_ip3 = inet_addr(recv_ip_addr3);

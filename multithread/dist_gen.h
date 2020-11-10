@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 void GenPoissonArrival(double rate, uint32_t size, double* poisson_array);
+void GenUniformDist(int lower_bound, int upper_bound, uint32_t seed, uint32_t size, int* output_array);
 
 #ifdef __cplusplus
 }

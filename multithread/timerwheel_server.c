@@ -15,9 +15,13 @@
 #include <pthread.h>
 #include "nanosleep.h"
 #include "epoll_state.h"
-
+#include "dist_gen.h"
 #include "multi_dest_header.h"
 //#include "multi_dest_protocol.h"
+#define GC_EVENTS_LENGTH 40000
+#define FEEDBACK_TO_BESS_ENABLE 1
+//#define GC_DELAY_ENABLE 1
+//#define SERVER_ECN_ENABLE 1
 
 static const int MAXPENDING = 20; // Maximum outstanding connection requests
 static const int SERVER_BUFSIZE = 1024*16;
@@ -182,7 +186,18 @@ int main(int argc, char *argv[]) {
     uint32_t expected_connections = (argc > 3) ? atoi(argv[3])*4+1: 1; // pseudo-connection for UDP
     char* identify_string = (argc > 4) ? argv[4]: "test";
     int is_direct_to_client= (argc > 5)? atoi(argv[5]): 1;
-    double rate = (argc > 6)? atof(argv[6]): 2000.0;
+    uint32_t feedback_period = (uint32_t) (argc > 6)? atoi(argv[6]): 100;
+    double rate = (argc > 7)? atof(argv[7]): 2000.0;
+    #ifdef GC_DELAY_ENABLE
+    // TODO: we expect a 500us gc event happend every 20 ms, 0.5 ms over 20 ms -> 1/40 prob
+    // the server event-loop check gc_events array every 500us  
+    uint64_t gc_duration = 500*1000; // 500 us, i.e. 500*1000 ns for garbage collection delay
+    int gc_event_period = 40;
+    uint32_t gc_event_index = 0 ;
+    int gc_events[GC_EVENTS_LENGTH]; // 20 secs of gc prob will be pre-generated!
+    struct timespec gc_ts1, gc_ts2;
+    #endif
+
     struct timespec ts1, ts2, sleep_ts1, sleep_ts2, start_ts, end_ts;
     char* routerIP = "10.0.0.18"; //argv[1];
     closed_loop_done = 0;
@@ -192,9 +207,15 @@ int main(int argc, char *argv[]) {
     ssize_t numBytesSend;
     int conn_count = 1;
     int setsize = 10240;
-    int* fd_array = (int *) malloc(1024 * sizeof(int) );
-    int fd_tail = 0; //int fd_head = 0;
-    //memset(&fd_array, -1, sizeof(fd_array));
+    #ifdef GC_DELAY_ENABLE
+    size_t length = strlen(recv_ip_addr);
+    unsigned int host_num = (unsigned int) atoi(&recv_ip_addr[length-1]);    
+    GenUniformDist(0, gc_event_period-1, host_num*host_num, GC_EVENTS_LENGTH, (int *) &gc_events);
+    //printf("host num: %u\n", host_num);
+    //for(uint32_t i = 0; i < GC_EVENTS_LENGTH; i++){
+    //    printf("%d\n", gc_events[i]);
+    //}
+    #endif
     
     epollState epstate;
     epstate.epoll_fd = -1;
@@ -268,7 +289,9 @@ int main(int argc, char *argv[]) {
     fbk_state->server_addr = routerAddr;    
     memset(&fbk_state->recv_header, 0, sizeof(alt_header));
     memset(&fbk_state->send_header, 0, sizeof(alt_header));
+    #ifdef FEEDBACK_TO_BESS_ENABLE
     pthread_create(feedback_thread, NULL, feedback_mainloop, fbk_state);
+    #endif
 
 
     struct sockaddr_in clntAddr; // Client address
@@ -303,8 +326,8 @@ int main(int argc, char *argv[]) {
     const char log[] = ".qevents";
     const char filename_prefix[] = "/home/shw328/kvstore/log/";
 
-    snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[3]) +  sizeof(argv[5]) + sizeof(identify_string) +
-        sizeof(log) + 15, "%s%s_%s_%sthd%s", filename_prefix, identify_string, argv[5], argv[3], log);
+    snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[3]) +  sizeof(argv[6]) + sizeof(identify_string) +
+        sizeof(log) + 15, "%s%s_%s_%sthd%s", filename_prefix, identify_string, argv[6], argv[3], log);
     FILE* output_fptr = fopen(logfilename, "w+");
 
     //TESTING DROP!
@@ -314,6 +337,9 @@ int main(int argc, char *argv[]) {
     uint64_t closedloop_counter = 0;
     uint64_t total_counter = 0;
     
+    #ifdef GC_DELAY_ENABLE
+    clock_gettime(CLOCK_REALTIME, &gc_ts1);
+    #endif
     while(1){
     //while(!closed_loop_done){
         //printf("epoll_wait: waiting for connections\n");
@@ -406,21 +432,34 @@ int main(int argc, char *argv[]) {
                 //     break;
                 // }
 
+                #ifdef GC_DELAY_ENABLE
+                clock_gettime(CLOCK_REALTIME, &gc_ts2);
+                uint64_t gc_diff_us = clock_gettime_diff_us(&gc_ts1, &gc_ts2);
+                if(gc_diff_us >= 500){
+                    if(gc_events[gc_event_index] == 0){
+                        clock_gettime(CLOCK_REALTIME, &ts1);
+                        sleep_ts1=ts1;
+                        realnanosleep(gc_duration, &sleep_ts1, &sleep_ts2); // gc time 500 us
+                    }
+                    gc_event_index = (gc_event_index + 1)%GC_EVENTS_LENGTH;
+                    clock_gettime(CLOCK_REALTIME, &gc_ts1); // refresh
+                }
+                #endif
                 //clock_gettime(CLOCK_REALTIME, &ts1);
                 //sleep_ts1=ts1;
                 //realnanosleep(10*1000, &sleep_ts1, &sleep_ts2); // processing time 10 us
 
                 while(send_byte_perloop < sizeof(alt_header)){
-                    // if(is_direct_to_client == 1){
-                    //     ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
-                    // }
-                    // else{
-                    alt_recv_header.service_id = 12;
-                    alt_recv_header.alt_dst_ip = clntAddr.sin_addr.s_addr; //inet_addr("10.0.0.4");
-                    //printf("clntAddr.sin_port:%" PRIu16 "\n", clntAddr);
-                    routerAddr.sin_port = clntAddr.sin_port; //htons(7120);
-                    ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &routerAddr, sizeof(routerAddr));
-                    //}
+                    if(is_direct_to_client == 1){
+                         ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
+                    }
+                    else{
+                        alt_recv_header.service_id = 12;
+                        alt_recv_header.alt_dst_ip = clntAddr.sin_addr.s_addr;
+                        //printf("clntAddr.sin_port:%" PRIu16 "\n", clntAddr);
+                        routerAddr.sin_port = clntAddr.sin_port;
+                        ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &routerAddr, sizeof(routerAddr));
+                    }
                     
                     //ssize_t numBytes = sendto(udp_socket_array[sock_index], (void*) &alt_send_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
                     if (numBytes < 0){
@@ -513,5 +552,5 @@ int main(int argc, char *argv[]) {
     }
     free(server_addr_array);
     free(udp_socket_array);
-    free(fd_array);
+    //free(fd_array);
 }
