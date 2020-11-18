@@ -107,6 +107,7 @@ int reclaim_multi_dest_buf2(multi_dest_buffer* buf, rto_timer_event* event, uint
         }
 
     }
+    return 0;
 }
 
 void free_multi_dest_buf(multi_dest_buffer* buf){

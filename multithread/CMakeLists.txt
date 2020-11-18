@@ -63,9 +63,29 @@ target_link_libraries(timerwheel_server PRIVATE cpp_dist)
 target_link_libraries(timerwheel_server PRIVATE m)
 #add_executable(timerwheel_roundrobin_server timerwheel_roundrobin_server.c)
 
+add_executable(redirection_udp_client redirection_udp_client.c)
+set_target_properties(redirection_udp_client PROPERTIES C_STANDARD 11)
+target_link_libraries(redirection_udp_client PRIVATE cpp_dist)
+target_link_libraries(redirection_udp_client PRIVATE cpp_map)
+target_link_libraries(redirection_udp_client PRIVATE m)
+
+add_executable(redirection_udp_server redirection_udp_server.c)
+set_target_properties(redirection_udp_server PROPERTIES C_STANDARD 11)
+target_link_libraries(redirection_udp_server PRIVATE cpp_dist )
+target_link_libraries(redirection_udp_server  PRIVATE cpp_map )
+target_link_libraries(redirection_udp_server PRIVATE m)
+
+add_library(cpp_map SHARED "map_containers.cc")
+add_executable(map_test map_test.c)
+target_link_libraries(map_test PRIVATE cpp_map)
+set_target_properties(map_test PROPERTIES C_STANDARD 11)
+
 add_executable(dist_test dist_test.c)
 target_link_libraries(dist_test PRIVATE cpp_dist )
 target_link_libraries(dist_test PRIVATE m)
 set_target_properties(dist_test PROPERTIES C_STANDARD 11)
 
+add_executable(udp_closedloop_client udp_client.c)
+target_link_libraries(udp_closedloop_client PRIVATE cpp_map)
+target_link_libraries(udp_closedloop_client PRIVATE m)
 
