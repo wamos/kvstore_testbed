@@ -12,6 +12,7 @@
 #include "nanosleep.h"
 #include "alt_header.h"
 #include "map_containers.h"
+#include "aws_config.h"
 
 #define ITERS 1000000
 

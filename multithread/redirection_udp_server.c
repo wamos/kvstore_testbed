@@ -18,6 +18,7 @@
 #include "dist_gen.h"
 #include "alt_header.h"
 #include "map_containers.h"
+#include "aws_config.h"
 //#define FEEDBACK_TO_BESS_ENABLE 1
 //#define GC_DELAY_ENABLE 1
 //#define SERVER_ECN_ENABLE 1
@@ -193,7 +194,7 @@ int main(int argc, char *argv[]) {
     #ifndef AWS_HASHTABLE
 	FILE* fp = fopen("/home/shw328/multi-tor-evalution/onearm_lb/test-pmd/routing_table_local.txt", "r");
 	#else
-	fp = fopen("~/multi-tor-evalution/onearm_lb/test-pmd/routing_table_aws.txt", "r");
+	FILE* fp = fopen("~/multi-tor-evalution/onearm_lb/test-pmd/routing_table_aws.txt", "r");
 	#endif
     if(fp == NULL){
         printf("fp is NULL\n");
