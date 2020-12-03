@@ -272,7 +272,7 @@ int main(int argc, char *argv[]) {
 	#ifndef AWS_HASHTABLE
 	FILE* fp = fopen("/home/shw328/multi-tor-evalution/onearm_lb/test-pmd/routing_table_local.txt", "r");
 	#else
-	fp = fopen("./routing_table_aws.txt", "r");
+	fp = fopen("~/multi-tor-evalution/onearm_lb/test-pmd/routing_table_aws.txt", "r");
 	#endif
     if(fp == NULL){
         printf("fp is NULL\n");
