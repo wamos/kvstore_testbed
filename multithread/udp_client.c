@@ -14,7 +14,7 @@
 #include "map_containers.h"
 #include "aws_config.h"
 
-#define ITERS 1000000
+#define ITERS 10000
 
 int UDPSocketSetup(int servSock, struct sockaddr_in servAddr){
     int clntSock;
@@ -57,7 +57,7 @@ int main(int argc, char *argv[]) {
     int is_direct_to_server = (argc > 7) ? atoi(argv[7]) : 1;
     int is_random_selection = (argc > 8) ? atoi(argv[8]) : 1;
     char* expname = (argc > 9) ? argv[9] : "dpdk_tor_test";
-    const char filename_prefix[] = "/home/shw328/multi-tor-evalution/onearm_lb/log/";
+    const char filename_prefix[] = "/home/ec2-user/multi-tor-evalution/onearm_lb/";
     const char log[] = ".log";
     char logfilename[100];
     snprintf(logfilename, sizeof(filename_prefix) + sizeof(log) + 30, "%s%s%s", filename_prefix, expname, log);
@@ -187,6 +187,7 @@ int main(int argc, char *argv[]) {
                 printf("send:%zd\n", numBytes);
             }
         }
+	//routerAddr.sin_port = routerAddr.sin_port + 1;
         Alt.request_id = Alt.request_id + 1;
         
         ssize_t recv_bytes = 0;
