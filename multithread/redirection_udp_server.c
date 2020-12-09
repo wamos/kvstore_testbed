@@ -208,13 +208,13 @@ int main(int argc, char *argv[]) {
 		// local-ip -> ToR ip
 		uint32_t dest_addr = inet_addr(ip_addr);
 		uint32_t tor_addr  = inet_addr(nexthop_addr);
-        map_insert(dest_addr,tor_addr);
-        //print_ipaddr("dest_addr", dest_addr);
-        //print_ipaddr("tor_addr", tor_addr);
-        //uint32_t ret_addr = map_lookup(dest_addr);
-        //print_ipaddr("tor_addr", ret_addr);
+		map_insert(dest_addr,tor_addr);
+		print_ipaddr("dest_addr", dest_addr);
+		print_ipaddr("tor_addr", tor_addr);
+		//uint32_t ret_addr = map_lookup(dest_addr);
+		////print_ipaddr("tor_addr", ret_addr);
 	}
-    free(ip_addr);
+    	free(ip_addr);
 	free(nexthop_addr);
 
     struct sockaddr_in routerAddr;                  // Local address
@@ -337,7 +337,7 @@ int main(int argc, char *argv[]) {
                     else{
                         recv_byte_perloop = recv_byte_perloop + numBytes;
                         total_recv_bytes = total_recv_bytes + numBytes;
-                        //printf("recv:%zd on fd %d\n", numBytes, e->data.fd);
+                        printf("recv:%zd on fd %d\n", numBytes, e->data.fd);
                     }
                 }                
 
@@ -350,7 +350,7 @@ int main(int argc, char *argv[]) {
                 // clock_gettime(CLOCK_REALTIME, &ts1);
                 // sleep_ts1=ts1;
                 // realnanosleep(1000, &sleep_ts1, &sleep_ts2); // processing time 1 us
-
+		
                 while(send_byte_perloop < sizeof(struct alt_header)){
                     if(is_direct_to_client == 1){
                          ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(struct alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
