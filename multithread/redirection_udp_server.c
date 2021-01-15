@@ -127,7 +127,7 @@ int main(int argc, char *argv[]) {
     // assume 4 pseudo-connections per open-loop thread and only 1 closed-loop pseudo-connection
     uint32_t expected_connections = (argc > 3) ? atoi(argv[3])*4+1: 1; // pseudo-connection for UDP
     char* identify_string = (argc > 4) ? argv[4]: "test";
-    int is_direct_to_client= (argc > 5)? atoi(argv[5]): 1;
+    int is_direct_to_client= (argc > 5)? atoi(argv[5]): 0;
     uint32_t feedback_period = (uint32_t) (argc > 6)? atoi(argv[6]): 100;
     double rate = (argc > 7)? atof(argv[7]): 2000.0;
 
@@ -191,11 +191,20 @@ int main(int argc, char *argv[]) {
 	char *nexthop_addr = (char*) malloc(20);
     int num_entries;
 
-    #ifndef AWS_HASHTABLE
-	FILE* fp = fopen("/home/shw328/multi-tor-evalution/onearm_lb/test-pmd/routing_table_local.txt", "r");
-	#else
-	FILE* fp = fopen("/home/ec2-user/multi-tor-evalution/onearm_lb/test-pmd/routing_table_aws.txt", "r");
-	#endif
+    //const char config_prefix[] = "/home/ec2-user/efs/evalution/config/";
+    //const char perhost_config_prefix[] = "/tmp/";
+    //const char file_type[] = ".txt";
+    char config_filename[100];
+    //#ifndef AWS_HASHTABLE
+	//FILE* fp = fopen("/home/shw328/multi-tor-evalution/onearm_lb/test-pmd/routing_table_local.txt", "r");
+	//#else
+	FILE* fp = fopen("/home/ec2-user/efs/multi-tor-evalution/config/routing_table_aws.txt", "r");
+	//#endif
+
+    //char* config_name = "routing_table_aws";
+	//snprintf(config_filename, sizeof(config_prefix) + 30 + sizeof(file_type), "%s%s%s", config_prefix, config_name, file_type);
+	//FILE* fp = fopen(config_filename, "r");
+
     if(fp == NULL){
         printf("fp is NULL\n");
         exit(1);
@@ -247,7 +256,7 @@ int main(int argc, char *argv[]) {
     ssize_t total_recv_bytes = 0;
     ssize_t total_send_bytes = 0;
     int accept_connections = 0;
-    int max_retries = 20;
+    int max_retries = 2;
     pkt_counter=0;
     uint64_t log_counter=0;
     int once = 0;    
@@ -298,11 +307,20 @@ int main(int argc, char *argv[]) {
                 ssize_t send_byte_perloop = 0;
                 int recv_retries = 0; 
                 int send_retries = 0;                    
+                //printf("alt_header size:%zd", sizeof(struct alt_header));
                 while(recv_byte_perloop < sizeof(struct alt_header)){
+                    //printf("recv_byte_perloop %zd,", recv_byte_perloop);
                     //numBytes = recvfrom(udp_socket_array[sock_index], (void*)&alt_recv_header, sizeof(alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
                     numBytes = recvfrom(e->data.fd, (void*)&alt_recv_header, sizeof(struct alt_header), 0, (struct sockaddr *) &clntAddr, (socklen_t *) &clntAddrLen);
+
+                    // char clientName[INET_ADDRSTRLEN]; // String to contain client address
+                    // if (inet_ntop(AF_INET, &clntAddr.sin_addr.s_addr, clientName, sizeof(clientName)) != NULL){
+                    //     printf("client addr: %s/ %d,", clientName, ntohs(clntAddr.sin_port));
+                    //     printf("client addrlen: %d\n", clntAddrLen);
+                    // }
                     //numBytes = recv(e->data.fd, recv_buffer, 20, MSG_DONTWAIT);
                     if (numBytes < 0){
+                        //printf("recv numBytes < 0\n");
                         if((errno == EAGAIN) || (errno == EWOULDBLOCK)){ 
                             recv_retries++;   
                             if(recv_retries == max_retries){
@@ -319,6 +337,7 @@ int main(int argc, char *argv[]) {
                         }
                     }
                     else if (numBytes == 0){ //&& recv_byte_perloop == 20){
+                        printf("recv numBytes == 0\n");
                         if(recv_byte_perloop == sizeof(struct alt_header)){
                             break;
                         }
@@ -337,8 +356,13 @@ int main(int argc, char *argv[]) {
                     else{
                         recv_byte_perloop = recv_byte_perloop + numBytes;
                         total_recv_bytes = total_recv_bytes + numBytes;
-                        printf("recv:%zd on fd %d\n", numBytes, e->data.fd);
+                        //printf("recv:%zd on fd %d\n", numBytes, e->data.fd);
                     }
+
+                    // if(numBytes = sizeof(struct alt_header)){
+                    //     printf("numBytes == size\n");
+                    //     break;
+                    // }
                 }                
 
                 if(drained_flag){
@@ -347,16 +371,22 @@ int main(int argc, char *argv[]) {
                     break;
                 }
 
-                // clock_gettime(CLOCK_REALTIME, &ts1);
-                // sleep_ts1=ts1;
-                // realnanosleep(1000, &sleep_ts1, &sleep_ts2); // processing time 1 us
+                clock_gettime(CLOCK_REALTIME, &ts1);
+                sleep_ts1=ts1;
+                realnanosleep(25*1000, &sleep_ts1, &sleep_ts2); // processing time 25 us
 		
                 while(send_byte_perloop < sizeof(struct alt_header)){
                     if(is_direct_to_client == 1){
-                         ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(struct alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
+                        //printf("recv req_id:%" PRIu32 "\n", alt_recv_header.request_id);
+                        ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(struct alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
                     }
                     else{
-                        alt_recv_header.msgtype_flags = SINGLE_PKT_RESP_PASSTHROUGH;
+                        if(alt_recv_header.msgtype_flags == SINGLE_PKT_REQ)
+                            alt_recv_header.msgtype_flags = SINGLE_PKT_RESP_PIGGYBACK;
+                        else
+                            alt_recv_header.msgtype_flags = SINGLE_PKT_RESP_PASSTHROUGH;
+
+                        alt_recv_header.feedback_options = num_events;
                         alt_recv_header.service_id = 1;
                         //print_ipaddr("actual_src_ip", alt_recv_header.actual_src_ip);
                         uint32_t src_ip = alt_recv_header.actual_src_ip;                        
@@ -397,7 +427,7 @@ int main(int argc, char *argv[]) {
                     else{
                         send_byte_perloop = send_byte_perloop + numBytes;
                         total_send_bytes = total_send_bytes + numBytes;
-                        //printf("send:%zd on fd %d\n", numBytes, e->data.fd);                
+                        //printf("send:%zd on fd %d\n", numBytes, e->data.fd);
                     }
                 }
                 total_counter++;
@@ -408,6 +438,10 @@ int main(int argc, char *argv[]) {
             if(e->data.fd == udp_socket_array[expected_connections-1]){
                 //printf("closedloop_counter:%" PRIu64 "\n", closedloop_counter);
                 closedloop_counter = closedloop_counter + req_perloop_counter;
+            }
+
+            if(total_counter%10000 == 0 && total_counter > 0){
+                printf("total_counter:%" PRIu64 "\n", total_counter);
             }
         }
 

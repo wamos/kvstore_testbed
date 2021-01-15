@@ -14,7 +14,7 @@
 #include "map_containers.h"
 #include "aws_config.h"
 
-#define ITERS 10000
+#define ITERS 500000
 
 int UDPSocketSetup(int servSock, struct sockaddr_in servAddr){
     int clntSock;
@@ -49,15 +49,16 @@ print_ipaddr(const char* string, uint32_t ip_addr){
 int main(int argc, char *argv[]) {
 
 	char* recvIP = argv[1];
-    char* routerIP = argv[2];   // 1st arg: BESS IP address (dotted quad)
-    char* destIP = argv[3];     // 2nd arg: alt dest ip addr;
-	char* destIP2 = argv[4];
-	char* destIP3 = argv[5];
-    in_port_t recvPort = (argc > 6) ? atoi(argv[6]) : 6379;
-    int is_direct_to_server = (argc > 7) ? atoi(argv[7]) : 1;
-    int is_random_selection = (argc > 8) ? atoi(argv[8]) : 1;
-    char* expname = (argc > 9) ? argv[9] : "dpdk_tor_test";
-    const char filename_prefix[] = "/home/ec2-user/multi-tor-evalution/onearm_lb/";
+    char* routerIP; //= argv[2];   // 1st arg: BESS IP address (dotted quad)
+    char* destIP  = (char*) malloc(10); //"10.0.0.1"; //= argv[3];     // 2nd arg: alt dest ip addr;
+	char* destIP2 = (char*) malloc(10); //"10.0.0.2"; //= argv[4];
+	char* destIP3 = (char*) malloc(10); //"10.0.0.3"; //= argv[5];
+    in_port_t recvPort = (argc > 2) ? atoi(argv[2]) : 7000;
+    int is_direct_to_server =  0; //(argc > 3) ? atoi(argv[3]) : 1;
+    int is_replica_selection =  (argc > 3) ? atoi(argv[3]) : 1;
+    int is_random_selection = (argc > 4) ? atoi(argv[4]) : 1;
+    char* expname = (argc > 5) ? argv[5] : "dpdk_tor_test";
+    const char filename_prefix[] = "/home/ec2-user/efs/multi-tor-evalution/log/";
     const char log[] = ".log";
     char logfilename[100];
     snprintf(logfilename, sizeof(filename_prefix) + sizeof(log) + 30, "%s%s%s", filename_prefix, expname, log);
@@ -72,11 +73,11 @@ int main(int argc, char *argv[]) {
 	char *nexthop_addr = (char*) malloc(20);
     int num_entries;
 
-	#ifndef AWS_HASHTABLE
-	FILE* read_fp = fopen("/home/shw328/multi-tor-evalution/onearm_lb/test-pmd/routing_table_local.txt", "r");
-	#else
-	FILE* read_fp = fopen("/home/ec2-user/multi-tor-evalution/onearm_lb/test-pmd/routing_table_aws.txt", "r");
-	#endif
+	//#ifndef AWS_HASHTABLE
+	//FILE* read_fp = fopen("/home/shw328/multi-tor-evalution/onearm_lb/test-pmd/routing_table_local.txt", "r");
+	//#else
+    FILE* read_fp = fopen("/home/ec2-user/efs/multi-tor-evalution/config/routing_table_aws.txt", "r");
+	//#endif
     if(read_fp == NULL){
         printf("fp is NULL\n");
         exit(1);
@@ -92,11 +93,23 @@ int main(int argc, char *argv[]) {
         map_insert(dest_addr,tor_addr);
         print_ipaddr("dest_addr", dest_addr);
         print_ipaddr("tor_addr", tor_addr);
-        //uint32_t ret_addr = map_lookup(dest_addr);
-        //print_ipaddr("tor_addr", ret_addr);
+        uint32_t ret_addr = map_lookup(dest_addr);
+        print_ipaddr("tor_addr", ret_addr);
 	}
     free(ip_addr);
 	free(nexthop_addr);
+
+    int service = 0 , num_replica = 0;
+    read_fp = fopen("/home/ec2-user/efs/multi-tor-evalution/config/replica_service_ip_aws.txt", "r");
+	//#endif
+    if(read_fp == NULL){
+        printf("fp is NULL\n");
+        exit(1);
+    }
+    fscanf(read_fp, "%d\n", &num_entries);
+    printf("replica_service_ip_aws: num_lines %d\n", num_entries);
+    fscanf(read_fp, "%d %d %s %s %s\n", &num_replica, &service, destIP, destIP2, destIP3);
+
     fclose(read_fp);
 
     int listen_sock;
@@ -126,6 +139,7 @@ int main(int argc, char *argv[]) {
 	memset(&routerAddr, 0, sizeof(routerAddr)); // Zero out structure
   	routerAddr.sin_family = AF_INET;          // IPv4 address family
     routerAddr.sin_port = htons(recvPort);    // Server port
+    printf("routerAddr lookup\n");
     routerAddr.sin_addr.s_addr = map_lookup(inet_addr(destIP)); //inet_addr(routerIP); // an incoming interface
     int routerAddrLen = sizeof(routerAddr);
 
@@ -138,18 +152,23 @@ int main(int argc, char *argv[]) {
 
     //our alt header
     struct alt_header Alt;    
-    Alt.service_id = 1;
     Alt.request_id = 0;
     Alt.feedback_options = 10;
     Alt.redirection = 0;
-    //if(is_random_selection)
-    Alt.msgtype_flags =   SINGLE_PKT_REQ_PASSTHROUGH;
-    //else
-    //Alt.msgtype_flags =   SINGLE_PKT_REQ;
+    
+    if(is_replica_selection)
+        Alt.msgtype_flags =   SINGLE_PKT_REQ;
+    else
+        Alt.msgtype_flags =   SINGLE_PKT_REQ_PASSTHROUGH;
+
     Alt.alt_dst_ip  = inet_addr(destIP);
+    Alt.service_id = service;
     Alt.replica_dst_list[0] = inet_addr(destIP);
 	Alt.replica_dst_list[1] = inet_addr(destIP2);
-	Alt.replica_dst_list[2] = inet_addr(destIP3); 
+	Alt.replica_dst_list[2] = inet_addr(destIP3);
+    print_ipaddr("replica_dst_list[0]:", Alt.replica_dst_list[0]);
+    print_ipaddr("replica_dst_list[1]:", Alt.replica_dst_list[1]);
+    print_ipaddr("replica_dst_list[2]:", Alt.replica_dst_list[2]);
     printf("sizeif Alt: %ld\n", sizeof(Alt));
     printf("is_direct_to_server: %d\n", is_direct_to_server);
     struct alt_header recv_alt;
@@ -161,14 +180,18 @@ int main(int argc, char *argv[]) {
         ssize_t send_bytes = 0;
         while(send_bytes < sizeof(struct alt_header)){
             if(is_random_selection){
-                int replica_num = rand()%2;
+                int replica_num = rand()%NUM_REPLICA;
                 if(replica_num == 0){
                     Alt.alt_dst_ip  = inet_addr(destIP);
                     routerAddr.sin_addr.s_addr = map_lookup(inet_addr(destIP));
                 }
-                else{
+                else if(replica_num == 1){
                     Alt.alt_dst_ip  = inet_addr(destIP2);
                     routerAddr.sin_addr.s_addr = map_lookup(inet_addr(destIP2));
+                }
+                else{
+                    Alt.alt_dst_ip  = inet_addr(destIP3);
+                    routerAddr.sin_addr.s_addr = map_lookup(inet_addr(destIP3));
                 }
             }
 
@@ -184,7 +207,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 send_bytes = send_bytes + numBytes;
-                printf("send:%zd\n", numBytes);
+                //printf("send:%zd\n", numBytes);
             }
         }
 	//routerAddr.sin_port = routerAddr.sin_port + 1;
@@ -210,7 +233,7 @@ int main(int argc, char *argv[]) {
             }
             else{
                 recv_bytes = recv_bytes +  numBytes;
-                printf("recv:%zd\n", numBytes);
+                //printf("recv:%zd\n", numBytes);
             } 
         }
 

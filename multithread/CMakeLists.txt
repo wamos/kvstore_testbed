@@ -24,6 +24,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${WARNING_FLAGS}")
 add_library(cpp_dist SHARED "cpp_dist.cc" "dist_gen.cc")
 set_target_properties(cpp_dist PROPERTIES CXX_STANDARD 11)
 
+add_library(cppdist STATIC "cpp_dist.cc" "dist_gen.cc")
+set_target_properties(cpp_dist PROPERTIES CXX_STANDARD 11)
+
 #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${MEMORY_LEAK_CHECK_FLAGS}")
 add_executable(tcp_server tcp_epollserver.c)
 set_target_properties(tcp_server PROPERTIES C_STANDARD 11)

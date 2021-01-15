@@ -20,7 +20,7 @@ uint32_t map_lookup(uint32_t key){
         return value;
     }
     catch (const std::out_of_range& oor){
-        std::cerr << "Out of Range error: " << oor.what() << '\n';
+        std::cerr << "map_lookup Out of Range error: " << oor.what() << '\n';
     }
     return 0;
 }
