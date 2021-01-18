@@ -363,7 +363,10 @@ int main(int argc, char *argv[]) {
                     //     printf("numBytes == size\n");
                     //     break;
                     // }
-                }                
+                }
+                //if(alt_recv_header.msgtype_flags == SINGLE_PKT_REQ){
+                //    printf("---------\nrecv SINGLE_PKT_REQ!\n---------\n");
+                //}                
 
                 if(drained_flag){
                     //if(req_perloop_counter > 1)
@@ -381,18 +384,21 @@ int main(int argc, char *argv[]) {
                         ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(struct alt_header), 0, (struct sockaddr *) &clntAddr, sizeof(clntAddr));
                     }
                     else{
-                        if(alt_recv_header.msgtype_flags == SINGLE_PKT_REQ)
+                        if(alt_recv_header.msgtype_flags == SINGLE_PKT_REQ){
                             alt_recv_header.msgtype_flags = SINGLE_PKT_RESP_PIGGYBACK;
+                            //printf("---------\nsent SINGLE_PKT_REQ!\n---------\n");
+                        }
                         else
                             alt_recv_header.msgtype_flags = SINGLE_PKT_RESP_PASSTHROUGH;
 
                         alt_recv_header.feedback_options = num_events;
-                        alt_recv_header.service_id = 1;
+                        //alt_recv_header.service_id = 1;
                         //print_ipaddr("actual_src_ip", alt_recv_header.actual_src_ip);
-                        uint32_t src_ip = alt_recv_header.actual_src_ip;                        
+                        //print_ipaddr("alt_dst_ip", alt_recv_header.alt_dst_ip);
+                        //uint32_t src_ip = alt_recv_header.actual_src_ip;                        
                         //printf("clntAddr.sin_port:%" PRIu16 "\n", clntAddr);
                         routerAddr.sin_port = clntAddr.sin_port;
-                        alt_recv_header.alt_dst_ip = src_ip;
+                        //alt_recv_header.alt_dst_ip = src_ip;
                         ssize_t numBytes = sendto(e->data.fd, (void*) &alt_recv_header, sizeof(struct alt_header), 0, (struct sockaddr *) &routerAddr, sizeof(routerAddr));
                     }
                     

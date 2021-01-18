@@ -14,7 +14,8 @@
 #include "map_containers.h"
 #include "aws_config.h"
 
-#define ITERS 500000
+//#define ITERS 500000
+#define ITERS 100000
 
 int UDPSocketSetup(int servSock, struct sockaddr_in servAddr){
     int clntSock;
@@ -46,6 +47,18 @@ print_ipaddr(const char* string, uint32_t ip_addr){
 			src_addr[0], src_addr[1], src_addr[2], src_addr[3]);
 }
 
+static inline void
+dump_ipaddr(FILE* fp, uint32_t ip_addr){
+	uint32_t ipaddr = ip_addr;
+	uint8_t src_addr[4];
+	src_addr[3] = (uint8_t) (ipaddr >> 24) & 0xff;
+	src_addr[2] = (uint8_t) (ipaddr >> 16) & 0xff;
+	src_addr[1] = (uint8_t) (ipaddr >> 8) & 0xff;
+	src_addr[0] = (uint8_t) ipaddr & 0xff;
+	fprintf(fp, "%%" PRIu8 ".%" PRIu8 ".%" PRIu8 ".%" PRIu8 "\n", fp,
+			src_addr[0], src_addr[1], src_addr[2], src_addr[3]);
+}
+
 int main(int argc, char *argv[]) {
 
 	char* recvIP = argv[1];
@@ -60,11 +73,28 @@ int main(int argc, char *argv[]) {
     char* expname = (argc > 5) ? argv[5] : "dpdk_tor_test";
     const char filename_prefix[] = "/home/ec2-user/efs/multi-tor-evalution/log/";
     const char log[] = ".log";
+    const char redirect[] = ".rdct";
+    const char all[] = ".all";
+
     char logfilename[100];
     snprintf(logfilename, sizeof(filename_prefix) + sizeof(log) + 30, "%s%s%s", filename_prefix, expname, log);
     struct timespec ts1, ts2, sleep_ts1, sleep_ts2;
     FILE* fp = fopen(logfilename,"w+");
     if(fp == NULL){
+       printf("fail to open the file\n");
+       exit(1);
+    }
+
+    snprintf(logfilename, sizeof(filename_prefix) + sizeof(log) + 30, "%s%s%s", filename_prefix, expname, redirect);
+    FILE* fp_redir = fopen(logfilename,"w+");
+    if(fp_redir == NULL){
+       printf("fail to open the file\n");
+       exit(1);
+    }
+
+    snprintf(logfilename, sizeof(filename_prefix) + sizeof(log) + 30, "%s%s%s", filename_prefix, expname, all);
+    FILE* fp_all = fopen(logfilename,"w+");
+    if(fp_all == NULL){
        printf("fail to open the file\n");
        exit(1);
     }
@@ -94,7 +124,7 @@ int main(int argc, char *argv[]) {
         print_ipaddr("dest_addr", dest_addr);
         print_ipaddr("tor_addr", tor_addr);
         uint32_t ret_addr = map_lookup(dest_addr);
-        print_ipaddr("tor_addr", ret_addr);
+        //print_ipaddr("tor_addr", ret_addr);
 	}
     free(ip_addr);
 	free(nexthop_addr);
@@ -152,20 +182,23 @@ int main(int argc, char *argv[]) {
 
     //our alt header
     struct alt_header Alt;    
-    Alt.request_id = 0;
-    Alt.feedback_options = 10;
-    Alt.redirection = 0;
-    
     if(is_replica_selection)
         Alt.msgtype_flags =   SINGLE_PKT_REQ;
     else
         Alt.msgtype_flags =   SINGLE_PKT_REQ_PASSTHROUGH;
 
-    Alt.alt_dst_ip  = inet_addr(destIP);
+    Alt.redirection = 0;
+    
+    Alt.feedback_options = 0;
     Alt.service_id = service;
+    Alt.request_id = 0;
+    
+    Alt.alt_dst_ip  = inet_addr(destIP);
+    //Alt.actual_src_ip = inet_addr(recvIP);    
     Alt.replica_dst_list[0] = inet_addr(destIP);
 	Alt.replica_dst_list[1] = inet_addr(destIP2);
 	Alt.replica_dst_list[2] = inet_addr(destIP3);
+
     print_ipaddr("replica_dst_list[0]:", Alt.replica_dst_list[0]);
     print_ipaddr("replica_dst_list[1]:", Alt.replica_dst_list[1]);
     print_ipaddr("replica_dst_list[2]:", Alt.replica_dst_list[2]);
@@ -238,20 +271,45 @@ int main(int argc, char *argv[]) {
         }
 
         clock_gettime(CLOCK_REALTIME, &ts2);
-        if(ts1.tv_sec == ts2.tv_sec){
-            fprintf(fp, "%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec); 
-            printf("%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec);
+        if(ts1.tv_sec == ts2.tv_sec){            
+            printf("%" PRIu8 ",%" PRIu64 "\n", recv_alt.redirection, ts2.tv_nsec - ts1.tv_nsec);
+            if(recv_alt.redirection > 0){
+                fprintf(fp_redir, "%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec);
+                //dump_ipaddr(fp_redir, recv_alt.actual_src_ip);
+            }
+            else
+                fprintf(fp, "%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec);
+            
+            fprintf(fp_all, "%" PRIu8 ",%" PRIu64 "\n", recv_alt.redirection, ts2.tv_nsec - ts1.tv_nsec);
+            //dump_ipaddr(fp_all, recv_alt.actual_src_ip);
+            //printf("%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec);
         }
         else{ 
             uint64_t ts1_nsec = ts1.tv_nsec + 1000000000*ts1.tv_sec;
-            uint64_t ts2_nsec = ts2.tv_nsec + 1000000000*ts2.tv_sec;                    
-            fprintf(fp, "%" PRIu64 "\n", ts2_nsec - ts1_nsec);
-            printf("%" PRIu64 "\n", ts2_nsec - ts1_nsec);
-        } 
+            uint64_t ts2_nsec = ts2.tv_nsec + 1000000000*ts2.tv_sec;                                
+            printf("%" PRIu8 ",%" PRIu64 "\n", recv_alt.redirection, ts2_nsec - ts1_nsec);
+            if(recv_alt.redirection > 0){
+                fprintf(fp_redir, "%" PRIu64 "\n", ts2_nsec - ts1_nsec);
+                //dump_ipaddr(fp_redir, recv_alt.actual_src_ip);
+            }
+            else
+                fprintf(fp, "%" PRIu64 "\n", ts2_nsec - ts1_nsec);
+
+            fprintf(fp_all, "%" PRIu8 ",%" PRIu64 "\n", recv_alt.redirection, ts2_nsec - ts1_nsec);
+            //dump_ipaddr(fp_all, recv_alt.actual_src_ip);
+            //fprintf(fp, "%" PRIu64 "\n", ts2.tv_nsec - ts1.tv_nsec);
+            //printf("%" PRIu64 "\n", ts2_nsec - ts1_nsec);
+        }
+
+        // clock_gettime(CLOCK_REALTIME, &ts1);
+	    // sleep_ts1=ts1;
+	    // realnanosleep(500*1000, &sleep_ts1, &sleep_ts2); // 500 us between requests
 	}
 
 	close(send_sock);
     fclose(fp);
+    fclose(fp_redir);
+    fclose(fp_all);
 
   	exit(0);
 }
