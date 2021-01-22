@@ -21,7 +21,7 @@
 #include "aws_config.h"
 #include <signal.h> // for signal handler
 //#define FEEDBACK_TO_BESS_ENABLE 1
-//#define GC_EVENTS_LENGTH 40000
+#define GC_EVENTS_LENGTH 600000 // 1 gc slot is 1ms, this length can be used for 600 sec
 //#define GC_DELAY_ENABLE 1
 //#define SERVER_ECN_ENABLE 1
 //#define AWS_HASHTABLE 1
@@ -30,7 +30,10 @@ static const int MAXPENDING = 20; // Maximum outstanding connection requests
 static const int SERVER_BUFSIZE = 1024*16;
 int closed_loop_done;
 int queued_events;
-uint64_t pkt_counter;
+uint32_t req_pkt_counter;
+uint32_t gc_event_index;
+uint64_t* inter_request_intervals; // we'll use this to recompute the server service rate
+FILE* output_fptr;
 
 int UDPSocketSetup(int servSock, struct sockaddr_in servAddr){
     int clntSock;
@@ -131,11 +134,21 @@ signal_handler(int signum)
 
 		//TODO: Dump server request logs
         printf("Dump request timestamp logs\n");
+        // for the very first request, we mark its time as 0 as the reference
+        //fprintf(output_fptr, "%d\n", 0);
+        printf("gc_event_index:%" PRIu32 "\n", gc_event_index);
+        printf("req_pkt_counter:%" PRIu32 "\n", req_pkt_counter);
+        for(uint32_t i = 0; i < req_pkt_counter; i++){
+            fprintf(output_fptr, "%" PRIu64 "\n", inter_request_intervals[i]);
+        }
+        
+        free(inter_request_intervals);
 		/* exit with the expected status */
 		signal(signum, SIG_DFL);
 		kill(getpid(), signum);
 	}
 }
+
 
 int main(int argc, char *argv[]) {
 
@@ -144,19 +157,24 @@ int main(int argc, char *argv[]) {
     // assume 4 pseudo-connections per open-loop thread and only 1 closed-loop pseudo-connection
     uint32_t expected_connections = (argc > 3) ? atoi(argv[3])*4+1: 1; // pseudo-connection for UDP
     char* identify_string = (argc > 4) ? argv[4]: "test";
-    int is_direct_to_client= (argc > 5)? atoi(argv[5]): 0;
-    uint32_t feedback_period = (uint32_t) (argc > 6)? atoi(argv[6]): 100;
-    double rate = (argc > 7)? atof(argv[7]): 2000.0;
+    int rate = (argc > 5)? atoi(argv[5]): 10000;
+    int is_direct_to_client = 0; //(argc > 5)? atoi(argv[5]): 0;
+    //uint32_t feedback_period = (uint32_t) (argc > 6)? atoi(argv[6]): 100;
+    //double rate = (argc > 7)? atof(argv[7]): 2000.0;
+    
+    // the size of inter_request_intervals should be sufficient for 10 mins, i.e. 600 secs 
+    inter_request_intervals = (uint64_t *) malloc(600*rate*sizeof(uint64_t));
 
     signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
     
     #ifdef GC_DELAY_ENABLE
-    // TODO: we expect a 500us gc event happend every 20 ms, 0.5 ms over 20 ms -> 1/40 prob
-    // the server event-loop check gc_events array every 500us  
-    uint64_t gc_duration = 500*1000; // 500 us, i.e. 500*1000 ns for garbage collection delay
-    int gc_event_period = 40;
-    uint32_t gc_event_index = 0 ;
+    // TODO: we expect n 1 ms gc events happend every 100 ms, prob: n/100
+    // the server event-loop check gc_events array every 1ms to see if it's time to gc 
+    int gc_prob_n = (argc > 6)? atoi(argv[6]): 1;  
+    gc_event_index = 0;
+    uint64_t gc_duration = 1000*1000; // 1 ms, i.e. 1000*1000 ns for garbage collection delay
+    int gc_event_period = 100;    
     int gc_events[GC_EVENTS_LENGTH]; // 20 secs of gc prob will be pre-generated!
     struct timespec gc_ts1, gc_ts2;
     #endif
@@ -176,9 +194,9 @@ int main(int argc, char *argv[]) {
     unsigned int host_num = (unsigned int) atoi(&recv_ip_addr[length-1]);    
     GenUniformDist(0, gc_event_period-1, host_num*host_num, GC_EVENTS_LENGTH, (int *) &gc_events);
     //printf("host num: %u\n", host_num);
-    //for(uint32_t i = 0; i < GC_EVENTS_LENGTH; i++){
-    //    printf("%d\n", gc_events[i]);
-    //}
+    for(uint32_t i = 0; i < 50; i++){
+        printf("%d\n", gc_events[i]);
+    }
     #endif
     
     epollState epstate;
@@ -297,17 +315,19 @@ int main(int argc, char *argv[]) {
     ssize_t total_send_bytes = 0;
     int accept_connections = 0;
     int max_retries = 2;
-    pkt_counter=0;
+    req_pkt_counter=0;
     uint64_t log_counter=0;
     int once = 0;    
 
     char logfilename[100];
-    const char log[] = ".qevents";
-    const char filename_prefix[] = "/home/shw328/kvstore/log/";
+    const char log[] = ".log";
+    char rate_str[12];
+    const char filename_prefix[] = "/home/ec2-user/efs/kvstore_testbed/log/";
+    int rate_div_1000 = (int) rate/1000;
+	sprintf(rate_str, "_%dk", rate_div_1000);
 
-    snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[3]) +  sizeof(argv[6]) + sizeof(identify_string) +
-        sizeof(log) + 15, "%s%s_%s_%sthd%s", filename_prefix, identify_string, argv[6], argv[3], log);
-    //FILE* output_fptr = fopen(logfilename, "w+");
+    snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[4]) + sizeof(rate_str) + sizeof(log) + 15, "%s%s%s%s", filename_prefix, identify_string, rate_str , log);
+    output_fptr = fopen(logfilename, "w+");
 
     //TESTING DROP!
     int drop_once_req310 = 0;
@@ -316,6 +336,7 @@ int main(int argc, char *argv[]) {
     uint64_t closedloop_counter = 0;
     uint64_t total_counter = 0;
     
+    clock_gettime(CLOCK_REALTIME, &start_ts);
     #ifdef GC_DELAY_ENABLE
     clock_gettime(CLOCK_REALTIME, &gc_ts1);
     #endif
@@ -414,18 +435,37 @@ int main(int argc, char *argv[]) {
                     break;
                 }
 
-                clock_gettime(CLOCK_REALTIME, &ts1);
+                if(req_pkt_counter > 0){
+                   clock_gettime(CLOCK_REALTIME, &end_ts);
+                   uint64_t diff_us = clock_gettime_diff_us(&start_ts, &end_ts);
+                   //printf("%" PRIu64 "\n", diff_ns);
+                   inter_request_intervals[req_pkt_counter] = diff_us;
+                   clock_gettime(CLOCK_REALTIME, &start_ts);
+                   req_pkt_counter++;
+                }
+                else{ //req_pkt_counter == 0 
+                    // clock_gettime(CLOCK_REALTIME, &end_ts);
+                    // uint64_t diff_ns = clock_gettime_diff_ns(&start_ts, &end_ts);
+                    // printf("%" PRIu64 "\n", diff_ns);
+                    // inter_request_intervals[req_pkt_counter] = diff_ns;
+                    clock_gettime(CLOCK_REALTIME, &start_ts);
+                    req_pkt_counter++;
+                }
+                
+                clock_gettime(CLOCK_REALTIME, &ts1);                
                 sleep_ts1=ts1;
                 realnanosleep(25*1000, &sleep_ts1, &sleep_ts2); // processing time 25 us
+
                 #ifdef GC_DELAY_ENABLE
                 clock_gettime(CLOCK_REALTIME, &gc_ts2);
-                uint64_t gc_diff_us = clock_gettime_diff_us(&gc_ts1, &gc_ts2);
-                if(gc_diff_us >= 500){
-                    if(gc_events[gc_event_index] == 0){
+                uint64_t gc_diff_ns = clock_gettime_diff_ns(&gc_ts1, &gc_ts2);
+                if(gc_diff_ns >= gc_duration){ // 1 ms period
+                    if(gc_events[gc_event_index] <= gc_prob_n){                        
+                        printf("gc index:%" PRIu32 "\n", gc_event_index);
                         clock_gettime(CLOCK_REALTIME, &ts1);
                         sleep_ts1=ts1;
-                        realnanosleep(gc_duration, &sleep_ts1, &sleep_ts2); // gc time 500 us
-                    }
+                        realnanosleep(gc_duration, &sleep_ts1, &sleep_ts2); // gc time 1000 us
+                    }                    
                     gc_event_index = (gc_event_index + 1)%GC_EVENTS_LENGTH;
                     clock_gettime(CLOCK_REALTIME, &gc_ts1); // refresh
                 }
@@ -504,21 +544,21 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        if(closedloop_counter == 1){
-            clock_gettime(CLOCK_REALTIME, &start_ts);
-        }
-        //printf("\n");
-        //printf("recv:%zd, send:%zd\n", total_recv_bytes, total_send_bytes);
+        // if(closedloop_counter == 1){
+        //     clock_gettime(CLOCK_REALTIME, &start_ts);
+        // }
+        // //printf("\n");
+        // //printf("recv:%zd, send:%zd\n", total_recv_bytes, total_send_bytes);
 
-        if(closedloop_counter > 99000 ){
-            clock_gettime(CLOCK_REALTIME, &end_ts);
-            uint64_t diff_us = clock_gettime_diff_us(&end_ts, &start_ts);
-            double diff_seconds = (double) diff_us / 1000000.0;
-            double recv_rate = (double) total_counter / diff_seconds; 
-            printf("recv req rate: %lf\n", recv_rate);
-            closedloop_counter = 0;
-            total_counter = 0;
-        }
+        // if(closedloop_counter > 99000 ){
+        //     clock_gettime(CLOCK_REALTIME, &end_ts);
+        //     uint64_t diff_us = clock_gettime_diff_us(&end_ts, &start_ts);
+        //     double diff_seconds = (double) diff_us / 1000000.0;
+        //     double recv_rate = (double) total_counter / diff_seconds; 
+        //     printf("recv req rate: %lf\n", recv_rate);
+        //     closedloop_counter = 0;
+        //     total_counter = 0;
+        // }
 
         if(total_counter%10000 == 0 && total_counter > 0){
             printf("total_counter:%" PRIu64 "\n", total_counter);
