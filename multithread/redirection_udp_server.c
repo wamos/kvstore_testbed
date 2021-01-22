@@ -19,7 +19,9 @@
 #include "alt_header.h"
 #include "map_containers.h"
 #include "aws_config.h"
+#include <signal.h> // for signal handler
 //#define FEEDBACK_TO_BESS_ENABLE 1
+//#define GC_EVENTS_LENGTH 40000
 //#define GC_DELAY_ENABLE 1
 //#define SERVER_ECN_ENABLE 1
 //#define AWS_HASHTABLE 1
@@ -120,6 +122,21 @@ print_ipaddr(const char* string, uint32_t ip_addr){
 			src_addr[0], src_addr[1], src_addr[2], src_addr[3]);
 }
 
+static void
+signal_handler(int signum)
+{
+	if (signum == SIGINT || signum == SIGTERM) {
+		printf("\nSignal %d received, preparing to exit...\n",
+				signum);
+
+		//TODO: Dump server request logs
+        printf("Dump request timestamp logs\n");
+		/* exit with the expected status */
+		signal(signum, SIG_DFL);
+		kill(getpid(), signum);
+	}
+}
+
 int main(int argc, char *argv[]) {
 
 	char* recv_ip_addr = argv[1];     // 1st arg: server IP address (dotted quad)
@@ -131,6 +148,19 @@ int main(int argc, char *argv[]) {
     uint32_t feedback_period = (uint32_t) (argc > 6)? atoi(argv[6]): 100;
     double rate = (argc > 7)? atof(argv[7]): 2000.0;
 
+    signal(SIGINT, signal_handler);
+	signal(SIGTERM, signal_handler);
+    
+    #ifdef GC_DELAY_ENABLE
+    // TODO: we expect a 500us gc event happend every 20 ms, 0.5 ms over 20 ms -> 1/40 prob
+    // the server event-loop check gc_events array every 500us  
+    uint64_t gc_duration = 500*1000; // 500 us, i.e. 500*1000 ns for garbage collection delay
+    int gc_event_period = 40;
+    uint32_t gc_event_index = 0 ;
+    int gc_events[GC_EVENTS_LENGTH]; // 20 secs of gc prob will be pre-generated!
+    struct timespec gc_ts1, gc_ts2;
+    #endif
+
     struct timespec ts1, ts2, sleep_ts1, sleep_ts2, start_ts, end_ts;
     char* routerIP = "10.0.0.18"; //argv[1];
     closed_loop_done = 0;
@@ -140,6 +170,16 @@ int main(int argc, char *argv[]) {
     ssize_t numBytesSend;
     int conn_count = 1;
     int setsize = 10240;
+
+    #ifdef GC_DELAY_ENABLE
+    size_t length = strlen(recv_ip_addr);
+    unsigned int host_num = (unsigned int) atoi(&recv_ip_addr[length-1]);    
+    GenUniformDist(0, gc_event_period-1, host_num*host_num, GC_EVENTS_LENGTH, (int *) &gc_events);
+    //printf("host num: %u\n", host_num);
+    //for(uint32_t i = 0; i < GC_EVENTS_LENGTH; i++){
+    //    printf("%d\n", gc_events[i]);
+    //}
+    #endif
     
     epollState epstate;
     epstate.epoll_fd = -1;
@@ -377,6 +417,19 @@ int main(int argc, char *argv[]) {
                 clock_gettime(CLOCK_REALTIME, &ts1);
                 sleep_ts1=ts1;
                 realnanosleep(25*1000, &sleep_ts1, &sleep_ts2); // processing time 25 us
+                #ifdef GC_DELAY_ENABLE
+                clock_gettime(CLOCK_REALTIME, &gc_ts2);
+                uint64_t gc_diff_us = clock_gettime_diff_us(&gc_ts1, &gc_ts2);
+                if(gc_diff_us >= 500){
+                    if(gc_events[gc_event_index] == 0){
+                        clock_gettime(CLOCK_REALTIME, &ts1);
+                        sleep_ts1=ts1;
+                        realnanosleep(gc_duration, &sleep_ts1, &sleep_ts2); // gc time 500 us
+                    }
+                    gc_event_index = (gc_event_index + 1)%GC_EVENTS_LENGTH;
+                    clock_gettime(CLOCK_REALTIME, &gc_ts1); // refresh
+                }
+                #endif
 		
                 while(send_byte_perloop < sizeof(struct alt_header)){
                     if(is_direct_to_client == 1){
