@@ -33,7 +33,9 @@ int queued_events;
 uint32_t req_pkt_counter;
 uint32_t gc_event_index;
 uint64_t* inter_request_intervals; // we'll use this to recompute the server service rate
+struct timespec* rx_timestamps;
 FILE* output_fptr;
+FILE* rxts_fp;
 
 int UDPSocketSetup(int servSock, struct sockaddr_in servAddr){
     int clntSock;
@@ -138,10 +140,13 @@ signal_handler(int signum)
         //fprintf(output_fptr, "%d\n", 0);
         printf("gc_event_index:%" PRIu32 "\n", gc_event_index);
         printf("req_pkt_counter:%" PRIu32 "\n", req_pkt_counter);
-        for(uint32_t i = 0; i < req_pkt_counter; i++){
-            fprintf(output_fptr, "%" PRIu64 "\n", inter_request_intervals[i]);
+        for(uint32_t index = 1; index < req_pkt_counter; index++){
+            //fprintf(rxts_fp, "%" PRIu64 "\n", inter_request_intervals[i]);
+            fprintf(rxts_fp, "%" PRId64 ",%" PRId64 "\n", rx_timestamps[index].tv_sec, rx_timestamps[index].tv_nsec);
         }
+        fclose(rxts_fp);
         
+        free(rx_timestamps);
         free(inter_request_intervals);
 		/* exit with the expected status */
 		signal(signum, SIG_DFL);
@@ -164,6 +169,7 @@ int main(int argc, char *argv[]) {
     
     // the size of inter_request_intervals should be sufficient for 10 mins, i.e. 600 secs 
     inter_request_intervals = (uint64_t *) malloc(600*rate*sizeof(uint64_t));
+    rx_timestamps = (struct timespec*) malloc(600*rate*sizeof(struct timespec));
 
     signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
@@ -321,13 +327,18 @@ int main(int argc, char *argv[]) {
 
     char logfilename[100];
     const char log[] = ".log";
+    const char rxts_type[] = ".srxts";
     char rate_str[12];
     const char filename_prefix[] = "/home/ec2-user/efs/kvstore_testbed/log/";
     int rate_div_1000 = (int) rate/1000;
 	sprintf(rate_str, "_%dk", rate_div_1000);
 
-    snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[4]) + sizeof(rate_str) + sizeof(log) + 15, "%s%s%s%s", filename_prefix, identify_string, rate_str , log);
-    output_fptr = fopen(logfilename, "w+");
+    // snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[4]) + sizeof(rate_str) + sizeof(log) + 30, "%s%s%s%s", filename_prefix, identify_string, rate_str , log);
+    // output_fptr = fopen(logfilename, "w+");
+
+    snprintf(logfilename, sizeof(filename_prefix) + sizeof(argv[4]) + sizeof(rate_str) + sizeof(rxts_type) + 30, "%s%s%s%s", filename_prefix, identify_string, rate_str , rxts_type);
+    rxts_fp = fopen(logfilename, "w+");
+
 
     //TESTING DROP!
     int drop_once_req310 = 0;
@@ -427,7 +438,11 @@ int main(int argc, char *argv[]) {
                 }
                 //if(alt_recv_header.msgtype_flags == SINGLE_PKT_REQ){
                 //    printf("---------\nrecv SINGLE_PKT_REQ!\n---------\n");
-                //}                
+                //}
+
+                clock_gettime(CLOCK_REALTIME, &ts1);
+                rx_timestamps[req_pkt_counter] =  ts1;
+                alt_recv_header.final_server_ip = inet_addr(recv_ip_addr);
 
                 if(drained_flag){
                     //if(req_perloop_counter > 1)

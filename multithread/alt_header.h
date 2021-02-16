@@ -37,6 +37,13 @@ struct alt_header {
   // stay here for testing older version!
   //uint32_t alt_dst_ip2;
   //uint32_t alt_dst_ip3;  
+  
+  //debug fields
+  uint32_t final_server_ip;
+  uint64_t req_ts_sec;
+  uint64_t req_ts_nsec;
+  uint64_t resp_ts_sec;
+  uint64_t resp_ts_nsec;  
 
   //load information appended here!
   uint16_t service_id_list[HOST_PER_RACK];   // 20 bytes
