@@ -23,6 +23,17 @@ void GenUniformDist(int lower_bound, int upper_bound, uint32_t seed, uint32_t si
     dist_gen.OutputUniformRandomInMicroseconds(output_array);
 }
 
+void GenBimoalDist(double dist1_prob, uint32_t dist1_value, uint32_t dist2_value, uint32_t size, int* output_array){
+    DistGen dist_gen;
+    dist_gen.BimodalGen(dist1_prob, dist1_value, dist2_value, size);
+    dist_gen.OutputBimodalInMicroseconds(output_array);
+}
+
+void GenExpDist(double rate, uint32_t size, double* output_array){
+    DistGen dist_gen;
+    dist_gen.ExponentialGen(rate, size);
+    dist_gen.OutputExponentialInMicroseconds(output_array);
+}
 
 #ifdef __cplusplus
 }

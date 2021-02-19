@@ -21,6 +21,7 @@
 #include "aws_config.h"
 #include <signal.h> // for signal handler
 //#define FEEDBACK_TO_BESS_ENABLE 1
+#define BIMODAL_LENGTH 800000
 #define GC_EVENTS_LENGTH 600000 // 1 gc slot is 1ms, this length can be used for 600 sec
 //#define GC_DELAY_ENABLE 1
 //#define SERVER_ECN_ENABLE 1
@@ -204,6 +205,14 @@ int main(int argc, char *argv[]) {
         printf("%d\n", gc_events[i]);
     }
     #endif
+
+    //Bimodal prob. array
+    uint32_t bimodal_index = 0;
+    int bimodal_array[BIMODAL_LENGTH];
+    GenBimoalDist(0.9, 13, 130, BIMODAL_LENGTH, bimodal_array);
+    for(uint32_t i = 0; i < 10; i++){
+        printf("%d\n", bimodal_array[i]);
+    }
     
     epollState epstate;
     epstate.epoll_fd = -1;
@@ -469,7 +478,13 @@ int main(int argc, char *argv[]) {
                 
                 clock_gettime(CLOCK_REALTIME, &ts1);                
                 sleep_ts1=ts1;
+                //Uniform service time
                 realnanosleep(25*1000, &sleep_ts1, &sleep_ts2); // processing time 25 us
+                //Bimodal service time 0.8 prob is 25us, and 0.2 prob is 100us
+                // uint64_t serivce_duration = (uint64_t) bimodal_array[bimodal_index];
+                // serivce_duration = serivce_duration*1000; //make it ns!
+                // bimodal_index = (bimodal_index+1)%BIMODAL_LENGTH;
+                // realnanosleep(serivce_duration, &sleep_ts1, &sleep_ts2);                
 
                 #ifdef GC_DELAY_ENABLE
                 clock_gettime(CLOCK_REALTIME, &gc_ts2);

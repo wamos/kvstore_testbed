@@ -19,14 +19,22 @@ int main() {
     // }
     // printf("\n");
 
-    int* uniform_random = (int *)malloc( 100* sizeof(int) );
-    GenUniformDist(0, 39, 5, 100, uniform_random);
+    // int* uniform_random = (int *)malloc( 100* sizeof(int) );
+    // GenUniformDist(0, 39, 5, 100, uniform_random);
+    // for(int n = 0; n < 100; n++) {
+    //     printf("%d\n", uniform_random[n]);
+    // }
+    // printf("\n");
+    //free(uniform_random);
+
+    int* bimodal_array = (int *)malloc( 100* sizeof(int) );
+    GenBimoalDist(0.8, 25, 100, 100, bimodal_array);
     for(int n = 0; n < 100; n++) {
-        printf("%d\n", uniform_random[n]);
+        printf("%d,", bimodal_array[n]);
     }
     printf("\n");
-
-    free(uniform_random);
+    free(bimodal_array);
+    
     free(poisson_arrival);
 
     return 0;
