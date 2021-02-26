@@ -27,13 +27,21 @@ int main() {
     // printf("\n");
     //free(uniform_random);
 
-    int* bimodal_array = (int *)malloc( 100* sizeof(int) );
-    GenBimoalDist(0.8, 25, 100, 100, bimodal_array);
+    // int* bimodal_array = (int *)malloc( 100* sizeof(int) );
+    // GenBimoalDist(0.8, 25, 100, 100, bimodal_array);
+    // for(int n = 0; n < 100; n++) {
+    //     printf("%d,", bimodal_array[n]);
+    // }
+    // printf("\n");
+    // free(bimodal_array);
+
+    uint32_t* exp_array = (int *)malloc( 100* sizeof(uint32_t) );
+    GenExpDist(40000.0, 100, exp_array);
     for(int n = 0; n < 100; n++) {
-        printf("%d,", bimodal_array[n]);
+        printf("%u,", exp_array[n]);
     }
     printf("\n");
-    free(bimodal_array);
+    free(exp_array);
     
     free(poisson_arrival);
 

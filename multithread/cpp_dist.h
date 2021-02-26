@@ -15,6 +15,7 @@ class DistGen {
         int OutputExponentialInMicroseconds(double* output_array);
         int OutputUniformRandomInMicroseconds(int* output_array);
         int OutputBimodalInMicroseconds(int* output_array);
+        int OutputExponential(uint32_t* output_array);
 
     private:
         std::vector<double> exponential_vector;

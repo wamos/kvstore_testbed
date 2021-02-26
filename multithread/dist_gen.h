@@ -10,7 +10,7 @@ extern "C" {
 void GenPoissonArrival(double rate, uint32_t size, double* poisson_array);
 void GenUniformDist(int lower_bound, int upper_bound, uint32_t seed, uint32_t size, int* output_array);
 void GenBimoalDist(double dist1_prob, uint32_t dist1_value, uint32_t dist2_value, uint32_t size, int* output_array);
-void GenExpDist(double rate, uint32_t size, double* output_array);
+void GenExpDist(double rate, uint32_t size, uint32_t* output_array);
 
 #ifdef __cplusplus
 }

@@ -207,11 +207,19 @@ int main(int argc, char *argv[]) {
     #endif
 
     //Bimodal prob. array
-    uint32_t bimodal_index = 0;
-    int bimodal_array[BIMODAL_LENGTH];
-    GenBimoalDist(0.9, 13, 130, BIMODAL_LENGTH, bimodal_array);
+    // uint32_t bimodal_index = 0;
+    // int bimodal_array[BIMODAL_LENGTH];
+    // GenBimoalDist(0.9, 13, 130, BIMODAL_LENGTH, bimodal_array);
+    // for(uint32_t i = 0; i < 10; i++){
+    //     printf("%d\n", bimodal_array[i]);
+    // }
+
+    uint32_t exp_index = 0;
+    uint32_t exp_array[BIMODAL_LENGTH];
+    //GenExpDist(500000.0, BIMODAL_LENGTH, exp_array); // 2us
+    GenExpDist(40000.0, BIMODAL_LENGTH, exp_array); // mean=25us
     for(uint32_t i = 0; i < 10; i++){
-        printf("%d\n", bimodal_array[i]);
+        printf("%d\n", exp_array[i]);
     }
     
     epollState epstate;
@@ -484,7 +492,13 @@ int main(int argc, char *argv[]) {
                 // uint64_t serivce_duration = (uint64_t) bimodal_array[bimodal_index];
                 // serivce_duration = serivce_duration*1000; //make it ns!
                 // bimodal_index = (bimodal_index+1)%BIMODAL_LENGTH;
-                // realnanosleep(serivce_duration, &sleep_ts1, &sleep_ts2);                
+                // realnanosleep(serivce_duration, &sleep_ts1, &sleep_ts2); 
+
+                //exp service time 40k rate aka mean = 25 us
+                // uint64_t serivce_duration = (uint64_t) exp_array[exp_index];
+                // serivce_duration = serivce_duration*1000; //make it ns!
+                // exp_index = (exp_index+1)%BIMODAL_LENGTH;
+                // realnanosleep(serivce_duration, &sleep_ts1, &sleep_ts2);
 
                 #ifdef GC_DELAY_ENABLE
                 clock_gettime(CLOCK_REALTIME, &gc_ts2);
