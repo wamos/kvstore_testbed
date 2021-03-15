@@ -161,12 +161,13 @@ int main(int argc, char *argv[]) {
 	char* recv_ip_addr = argv[1];     // 1st arg: server IP address (dotted quad)
     in_port_t recv_port_start = (in_port_t) (argc > 2) ? strtoul(argv[2], NULL, 10) : 7000;
     // assume 4 pseudo-connections per open-loop thread and only 1 closed-loop pseudo-connection
-    uint32_t expected_connections = (argc > 3) ? atoi(argv[3])*4+1: 1; // pseudo-connection for UDP
+    uint32_t expected_connections = (argc > 3) ? atoi(argv[3]): 1; // pseudo-connection for UDP
     char* identify_string = (argc > 4) ? argv[4]: "test";
     int rate = (argc > 5)? atoi(argv[5]): 10000;
     int is_direct_to_client = 0; //(argc > 5)? atoi(argv[5]): 0;
     //uint32_t feedback_period = (uint32_t) (argc > 6)? atoi(argv[6]): 100;
     //double rate = (argc > 7)? atof(argv[7]): 2000.0;
+    printf("num of conn:%"PRIu32"\n",expected_connections);
     
     // the size of inter_request_intervals should be sufficient for 10 mins, i.e. 600 secs 
     inter_request_intervals = (uint64_t *) malloc(600*rate*sizeof(uint64_t));
@@ -207,12 +208,12 @@ int main(int argc, char *argv[]) {
     #endif
 
     //Bimodal prob. array
-    // uint32_t bimodal_index = 0;
-    // int bimodal_array[BIMODAL_LENGTH];
-    // GenBimoalDist(0.9, 13, 130, BIMODAL_LENGTH, bimodal_array);
-    // for(uint32_t i = 0; i < 10; i++){
-    //     printf("%d\n", bimodal_array[i]);
-    // }
+    uint32_t bimodal_index = 0;
+    int bimodal_array[BIMODAL_LENGTH];
+    GenBimoalDist(0.9, 13, 130, BIMODAL_LENGTH, bimodal_array);
+    for(uint32_t i = 0; i < 10; i++){
+        printf("%d\n", bimodal_array[i]);
+    }
 
     uint32_t exp_index = 0;
     uint32_t exp_array[BIMODAL_LENGTH];
@@ -445,6 +446,7 @@ int main(int argc, char *argv[]) {
                     else{
                         recv_byte_perloop = recv_byte_perloop + numBytes;
                         total_recv_bytes = total_recv_bytes + numBytes;
+                        //printf("port: %d\n", ntohs(clntAddr.sin_port));
                         //printf("recv:%zd on fd %d\n", numBytes, e->data.fd);
                     }
 
@@ -487,7 +489,7 @@ int main(int argc, char *argv[]) {
                 clock_gettime(CLOCK_REALTIME, &ts1);                
                 sleep_ts1=ts1;
                 //Uniform service time
-                realnanosleep(25*1000, &sleep_ts1, &sleep_ts2); // processing time 25 us
+                realnanosleep(20*1000, &sleep_ts1, &sleep_ts2); // processing time 25 us
                 //Bimodal service time 0.8 prob is 25us, and 0.2 prob is 100us
                 // uint64_t serivce_duration = (uint64_t) bimodal_array[bimodal_index];
                 // serivce_duration = serivce_duration*1000; //make it ns!

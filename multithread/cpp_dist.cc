@@ -110,3 +110,16 @@ int DistGen::OutputBimodalInMicroseconds(int* output_array){
 
 }
 
+int DistGen::OutputExponential(uint32_t* output_array){
+    if(output_array != nullptr){
+        for(uint32_t i = 0; i < exponential_vector.size(); i++) {
+            output_array[i] = (uint32_t) ceil(exponential_vector[i]*1000000.0);
+        }
+        exponential_vector.clear();
+        return 0;
+    }
+    else{
+        return -1;
+    }
+}
+

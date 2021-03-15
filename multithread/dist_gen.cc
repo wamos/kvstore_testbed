@@ -29,10 +29,10 @@ void GenBimoalDist(double dist1_prob, uint32_t dist1_value, uint32_t dist2_value
     dist_gen.OutputBimodalInMicroseconds(output_array);
 }
 
-void GenExpDist(double rate, uint32_t size, double* output_array){
+void GenExpDist(double rate, uint32_t size, uint32_t* output_array){
     DistGen dist_gen;
     dist_gen.ExponentialGen(rate, size);
-    dist_gen.OutputExponentialInMicroseconds(output_array);
+    dist_gen.OutputExponential(output_array);
 }
 
 #ifdef __cplusplus
