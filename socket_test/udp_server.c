@@ -149,6 +149,7 @@ int main(int argc, char *argv[]) {
             alt_response.request_id = Alt.request_id;
             alt_response.feedback_options = 0;
             alt_response.alt_dst_ip = Alt.actual_src_ip; //clntAddr.sin_addr.s_addr;
+            alt_response.actual_src_ip = Alt.actual_src_ip; //clntAddr.sin_addr.s_addr;
 
             //printf("service_id:%" PRIu16 ",", alt_response.service_id);
             //printf("request_id:%" PRIu32 ",", alt_response.request_id);

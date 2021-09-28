@@ -19,7 +19,7 @@
 // uint64_t tcpSend(int fd ,char *buffer, uint64_t buf_size);
 // uint64_t tcpReceive(int fd, char *buffer, uint64_t buf_size);
 
-#define ITERS 100
+#define ITERS 10000
 
 // typedef struct __attribute__((__packed__)) {
 //   uint16_t service_id;    // Type of Service.
@@ -64,6 +64,13 @@ struct alt_header {
   //uint32_t alt_dst_ip2;
   //uint32_t alt_dst_ip3;  
 
+  //debug fields
+  uint32_t final_server_ip;
+  uint64_t req_ts_sec;
+  uint64_t req_ts_nsec;
+  uint64_t resp_ts_sec;
+  uint64_t resp_ts_nsec;  
+
   //load information appended here!
   uint16_t service_id_list[HOST_PER_RACK];   // 20 bytes
   uint32_t host_ip_list[HOST_PER_RACK];     // 40 bytes
@@ -71,6 +78,19 @@ struct alt_header {
 } __attribute__((__packed__)); // or use __rte_packed
 
 typedef struct alt_header alt_header;
+
+//FOR SWITCH_FEEDBACK_MSG and piggyback cases
+struct switch_exchange {
+  uint8_t  msgtype_flags;
+  uint32_t host_ip_list[HOST_PER_RACK];
+  uint16_t host_queue_depth[HOST_PER_RACK];
+}__attribute__((__packed__));
+
+struct replica_addr_list{
+  int list_size;
+  uint16_t service_id;
+  uint32_t replica_dst_list[NUM_REPLICA];
+};
 
 // msgtype_flags field details: suspended for now
 // -> bit 0,1: unused now
